@@ -87,7 +87,7 @@ in
         ipv4.addresses = [
           {
             address = vpnIPv4Address;
-            prefixLength = vpnIPv4Mask;
+            prefixLength = lib.toIntBase10 vpnIPv4Mask;
           }
         ];
 
@@ -95,7 +95,7 @@ in
           addresses = [
             {
               address = vpnIPv6Address;
-              prefixLength = vpnIPv6Mask;
+              prefixLength = lib.toIntBase10 vpnIPv6Mask;
             }
           ];
         };
