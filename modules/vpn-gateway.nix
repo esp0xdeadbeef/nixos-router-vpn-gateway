@@ -69,13 +69,8 @@ in
       lanIface = cfg.lanInterface;
       vpnIface = cfg.vpnInterface;
 
-      vpnNATInterface = cfg.lanInterface;
-      vpnInterface = cfg.vpnInterface;
+      cfg.vpnInterface = cfg.vpnInterface;
 
-      vpnConfBasePath = "/etc/vpn";
-      vpnConfPath = "${vpnConfBasePath}/${vpnIface}.conf";
-
-      enableVRF = false;
     in
     {
       networking.useHostResolvConf = lib.mkForce false;
@@ -121,7 +116,7 @@ in
 
       # 3. Decode VPN config at boot
       systemd.services.write-vpn-config = {
-        description = "Decode VPN config from sops and write to ${vpnConfPath}";
+        description = "Decode VPN config from sops and write to ${conf.vpnProfile}";
         wantedBy = [ "network-pre.target" ];
         before = [ "network-online.target" ];
         after = [ "local-fs.target" ];
@@ -136,7 +131,7 @@ in
       };
 
       systemd.services.vpn-dispatcher = {
-        description = "Bring up VPN tunnel (${vpnInterface}) and signal vpn-ready.target";
+        description = "Bring up VPN tunnel (${cfg.vpnInterface}) and signal vpn-ready.target";
         after = [
           "write-vpn-config.service"
           "systemd-networkd.service"
@@ -165,7 +160,7 @@ in
 
           ExecStart = pkgs.writeShellScript "vpn-dispatcher-start" ''
             set -euxo pipefail
-            CONF=${vpnConfPath}
+            CONF=${conf.vpnProfile}
 
             if grep -qE '^\[Interface\]' "$CONF"; then
               echo "[+] Detected WireGuard config"
@@ -180,8 +175,8 @@ in
             fi
 
             # confirm interface exists
-            if ! ip link show "${vpnInterface}" > /dev/null 2>&1; then
-              echo "[!] ${vpnInterface} not present after bringup"
+            if ! ip link show "${cfg.vpnInterface}" > /dev/null 2>&1; then
+              echo "[!] ${cfg.vpnInterface} not present after bringup"
               exit 1
             fi
 
@@ -194,7 +189,7 @@ in
 
           ExecStop = pkgs.writeShellScript "vpn-dispatcher-stop" ''
             set -euxo pipefail
-            CONF=${vpnConfPath}
+            CONF=${conf.vpnProfile}
             if grep -qE '^\[Interface\]' "$CONF"; then
               ${pkgs.wireguard-tools}/bin/wg-quick down "$CONF" || true
             elif grep -qE '^(client|dev|proto|remote)' "$CONF"; then
@@ -210,7 +205,7 @@ in
           ExecStart = pkgs.writeShellScript "vpn-check" ''
             #!/usr/bin/env bash
             set -euo pipefail
-            iface="${vpnInterface}"
+            iface="${cfg.vpnInterface}"
             rx_path="/sys/class/net/$iface/statistics/rx_bytes"
 
             # 1. Interface must exist
@@ -304,11 +299,11 @@ in
               # ----- Rules -----
 
               # IPv4 rule
-              ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${vpnInterface} -p tcp --dport "$port" \
+              ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.vpnInterface} -p tcp --dport "$port" \
                 -j DNAT --to-destination "$IPV4_PREFIX.$ipv4_host:$dst_port_v4"
 
               # IPv6 rule
-              ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${vpnInterface} -p tcp --dport "$port" \
+              ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.vpnInterface} -p tcp --dport "$port" \
                 -j DNAT --to-destination "[$IPV6_PREFIX:$ipv6_host_suffix]:$dst_port_v6"
             done
           '';
@@ -328,15 +323,15 @@ in
           ExecStart = pkgs.writeShellScript "update_iptables_v4" ''
             set -euo pipefail
             set -x
-            # Get the current IP address of ${vpnInterface}
+            # Get the current IP address of ${cfg.vpnInterface}
             source /etc/root/subnets.sh
 
-            # IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${vpnInterface} | grep 'ipv4.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
-            # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${vpnInterface}"  | cut -d ':' -f 2 | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
-            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
+            # IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv4.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
+            # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}"  | cut -d ':' -f 2 | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
+            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
             if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
                 # If it's empty or has '--', get the first hop's IPv4 address from traceroute and assign it to IPv4_DNS_VPN
-                IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+                IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
                 echo "IPV4 Tunnel IP: $IPv4_DNS_VPN"
             fi
 
@@ -344,17 +339,17 @@ in
             echo "IPv4_DNS_VPN: $IPv4_DNS_VPN"
 
             # Flush old rules for port 53 forwarding
-            ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${vpnNATInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
-            ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${vpnNATInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
+            ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
+            ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
             # Allow forwarding to self
-            ${pkgs.iptables}/bin/iptables -I FORWARD -i ${vpnNATInterface} -o ${vpnNATInterface} -j ACCEPT
+            ${pkgs.iptables}/bin/iptables -I FORWARD -i ${cfg.lanInterface} -o ${cfg.lanInterface} -j ACCEPT
             # Portforwards DNS
-            ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${vpnNATInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
-            ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${vpnNATInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
-            # MASQUERADE the traffic from ${vpnIPv4WithMask} to ${vpnInterface}
-            ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${vpnIPv4WithMask} -o ${vpnInterface} -j MASQUERADE
+            ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
+            ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
+            # MASQUERADE the traffic from ${vpnIPv4WithMask} to ${cfg.vpnInterface}
+            ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${vpnIPv4WithMask} -o ${cfg.vpnInterface} -j MASQUERADE
             # MSS clamping (mtu size forcing) 
-            ${pkgs.iptables}/bin/iptables -t mangle -A FORWARD -o ${vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+            ${pkgs.iptables}/bin/iptables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 
 
           '';
@@ -373,20 +368,20 @@ in
           ExecStart = pkgs.writeShellScript "update_iptables_v6" ''
             set -euo pipefail
             set -x
-            # Get the current IP address of ${vpnInterface}
+            # Get the current IP address of ${cfg.vpnInterface}
             source /etc/root/subnets.sh
 
-            # IPv6_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${vpnInterface} | grep 'ipv6.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
-            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $1; exit}' | ${pkgs.util-linux}/bin/rev)
+            # IPv6_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv6.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
+            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $1; exit}' | ${pkgs.util-linux}/bin/rev)
 
-            IPv6_INTERFACE_NATTED_LAN=$(${pkgs.iproute2}/bin/ip -6 a s ${vpnNATInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}' | cut -d '/' -f 1)
-            IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET=$(${pkgs.iproute2}/bin/ip -6 a s ${vpnNATInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
+            IPv6_INTERFACE_NATTED_LAN=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}' | cut -d '/' -f 1)
+            IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
 
 
             # Check if the DNS setting is empty or if it contains '--'
             if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
                 # If it's empty or has '--', get the first hop's IPv6 address from traceroute and assign it to IPv6_DNS_VPN
-                IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${vpnInterface} -n6 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+                IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
                 echo "IPV6 Tunnel IP: $IPv6_DNS_VPN"
             fi
 
@@ -396,33 +391,33 @@ in
 
 
             # Flush old rules for port 53 forwarding
-            ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${vpnNATInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
-            ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${vpnNATInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
+            ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
+            ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
 
             # allow callbacks on the adapter itself
-            ${pkgs.iptables}/bin/ip6tables -I FORWARD -i ${vpnNATInterface} -o ${vpnNATInterface} -j ACCEPT
+            ${pkgs.iptables}/bin/ip6tables -I FORWARD -i ${cfg.lanInterface} -o ${cfg.lanInterface} -j ACCEPT
             # Add new rules with the current IP address
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${vpnNATInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${vpnNATInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
+            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
+            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
 
-            # DNAT any incoming UDP or TCP DNS on ${vpnNATInterface} to the real VPN DNS server
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${vpnNATInterface} -p udp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${vpnNATInterface} -p tcp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${vpnNATInterface} -o ${vpnInterface} -p udp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${vpnNATInterface} -o ${vpnInterface} -p tcp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
+            # DNAT any incoming UDP or TCP DNS on ${cfg.lanInterface} to the real VPN DNS server
+            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
+            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
+            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -p udp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
+            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -p tcp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
 
             # All traffic from LAN to VPN
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${vpnNATInterface} -o ${vpnInterface} -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -j ACCEPT
+            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -j ACCEPT
 
             # Return traffic
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${vpnInterface} -o ${vpnNATInterface} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.vpnInterface} -o ${cfg.lanInterface} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
             # Accept return traffic
             ${pkgs.iptables}/bin/ip6tables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
-            ${pkgs.iptables}/bin/ip6tables -t nat -A POSTROUTING -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -o ${vpnInterface} -j MASQUERADE
+            ${pkgs.iptables}/bin/ip6tables -t nat -A POSTROUTING -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -o ${cfg.vpnInterface} -j MASQUERADE
 
 
-            ${pkgs.iptables}/bin/ip6tables -t mangle -A FORWARD -o ${vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+            ${pkgs.iptables}/bin/ip6tables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
           '';
           Type = "oneshot";
           RemainAfterExit = true;
@@ -512,7 +507,7 @@ in
               "renew-timer": 300,
               "rebind-timer": 540,
               "interfaces-config": {
-                "interfaces": [ "${vpnNATInterface}" ]
+                "interfaces": [ "${cfg.lanInterface}" ]
               },
               "lease-database": {
                 "type": "memfile",
@@ -546,7 +541,7 @@ in
         path = [ pkgs.radvd ];
 
         serviceConfig = {
-          ExecStart = "${pkgs.radvd}/bin/radvd -n -C /etc/radvd.conf ${vpnNATInterface}";
+          ExecStart = "${pkgs.radvd}/bin/radvd -n -C /etc/radvd.conf ${cfg.lanInterface}";
           Restart = "on-failure";
           RestartSec = 10;
           # StartLimitIntervalSec = 0;
@@ -558,8 +553,8 @@ in
           set -euo pipefail
           set -x
 
-          # Extract IPv6 address and subnet prefix for ${vpnNATInterface}
-          IPV6_ADDR=$(${pkgs.iproute2}/bin/ip -6 a s ${vpnNATInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
+          # Extract IPv6 address and subnet prefix for ${cfg.lanInterface}
+          IPV6_ADDR=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
 
           source /etc/root/subnets.sh
           IPV6_ADDR=${vpnIPv6WithMask}
@@ -567,7 +562,7 @@ in
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR")
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | ${pkgs.gawk}/bin/awk '{print $5}')
           IPV6_ADDR_WITHOUT_MASK=$(echo $IPV6_ADDR | sed 's/\/.*//g')
-          echo -n 'interface ${vpnNATInterface} {
+          echo -n 'interface ${cfg.lanInterface} {
             AdvSendAdvert on;
             MinRtrAdvInterval 10;
             MaxRtrAdvInterval 30;
@@ -584,18 +579,6 @@ in
         '';
       };
 
-      # environment.systemPackages = with pkgs; [
-      #   # coreutils
-      #   # python3
-      #   # coreutils
-      #   dnsutils # dig
-      #   openvpn
-      #   wireguard-tools
-      #   tcpdump
-      #   traceroute
-      #   nftables
-      # ];
-
       environment.etc = {
         "root/subnets.sh" = {
           source = pkgs.writeShellScript "subnets" ''
@@ -604,146 +587,6 @@ in
           '';
           mode = "0755";
         };
-
-        # "root/restore_internet.sh" = {
-        #   source = pkgs.writeShellScript "restore_internet" ''
-        #     #!/usr/bin/env bash
-        #     sudo systemctl stop vpn-dispatcher.service
-        #     set -euxo pipefail
-
-        #     NUKE_IFACES=("tun0" "ens19" "ens20")
-
-        #     echo "[+] Killing routes and rules for: ''${NUKE_IFACES[*]}"
-
-        #     for IFACE in "''${NUKE_IFACES[@]}"; do
-        #       echo "[-] Nuking interface: $IFACE"
-
-        #       # Flush routes from other tables that use the interface
-        #       for TABLE in $(ip route show table all | grep -F "$IFACE" | awk '{print $NF}' | sort -u); do
-        #         echo "  -> Flushing routes from table $TABLE"
-        #         ip route flush table "$TABLE" dev "$IFACE" || true
-        #         ip -6 route flush table "$TABLE" dev "$IFACE" || true
-        #       done
-
-        #       # Delete rules that reference the interface
-        #       ip rule | grep "$IFACE" || true
-        #       for RULE in $(ip rule | grep "$IFACE" | awk '{print $1}'); do
-        #         echo "  -> Deleting ip rule $RULE"
-        #         ip rule del priority "$RULE" || true
-        #       done
-
-        #       # Detach from VRF if necessary
-        #       if [ -e "/sys/class/net/$IFACE/master" ]; then
-        #         echo "  -> Detaching $IFACE from VRF"
-        #         ip link set dev "$IFACE" nomaster || true
-        #       fi
-
-        #       # Bring interface down
-        #       ip link set dev "$IFACE" down || true
-        #     done
-
-        #     echo "[+] Flushing iptables and ip6tables for cleanup"
-        #     iptables -F
-        #     iptables -t nat -F
-        #     iptables -t mangle -F
-        #     ip6tables -F
-        #     ip6tables -t nat -F
-        #     ip6tables -t mangle -F
-
-        #     sudo ip link set dev ens18 up
-        #     nft delete table inet vpnblock || true
-        #     echo "[+] Done. VRF interfaces nuked. Main interface untouched."
-        #     ip a show dev ens18
-        #     ip r
-
-        #     echo "[+] Setting fallback DNS to 1.1.1.1 and 9.9.9.9"
-        #     echo -e "nameserver 1.1.1.1\nnameserver 9.9.9.9" > /etc/resolv.conf
-
-        #     echo "[+] Final IP state on management interface:"
-        #     ip a show dev ens18
-
-        #     echo "[+] Route table:"
-        #     ip r
-
-        #     echo "[+] Testing external connectivity:"
-        #     ping -c 2 1.1.1.1
-        #     curl -s https://ifconfig.me || echo "curl failed"
-
-        #     echo "[✓] VRF interfaces nuked. DNS + routing restored via ens18."
-
-        #   '';
-        #   mode = "0755";
-        # };
-
-        # "NetworkManager/system-connections/${management_interface}.nmconnection" = {
-        #   text = ''
-        #     [connection]
-        #     id=${management_interface}
-        #     type=ethernet
-        #     interface-name=${management_interface}
-        #     autoconnect=true
-        #     permissions=
-
-        #     [ipv4]
-        #     method=auto
-        #     route-metric=300
-        #     ${if enableVRF then "" else "ignore-auto-dns=true\nnever-default=true"}
-
-        #     [ipv6]
-        #     method=auto
-        #     route-metric=300
-        #     ${if enableVRF then "" else "ignore-auto-dns=true\nnever-default=true"}
-        #   '';
-        #   mode = "0600";
-        # };
-
-        # "NetworkManager/system-connections/${upstream_VPN_interface}.nmconnection" = lib.mkIf (!enableVRF) {
-        #   text = ''
-        #     [connection]
-        #     id=${upstream_VPN_interface}
-        #     type=ethernet
-        #     interface-name=${upstream_VPN_interface}
-        #     autoconnect=true
-        #     permissions=
-
-        #     [ipv4]
-        #     method=auto
-        #     route-metric=500
-        #     ignore-auto-dns=false
-
-        #     [ipv6]
-        #     method=auto
-        #     route-metric=100
-        #     ignore-auto-dns=false
-        #   '';
-        #   mode = "0600";
-        # };
-
-        # "NetworkManager/system-connections/${vpnNATInterface}.nmconnection" = lib.mkIf (!enableVRF) {
-        #   text = ''
-        #     [connection]
-        #     id=${vpnNATInterface}
-        #     type=ethernet
-        #     interface-name=${vpnNATInterface}
-        #     autoconnect=true
-        #     permissions=
-
-        #     [ipv4]
-        #     method=manual
-        #     address1=${vpnIPv4WithMask}
-        #     route-metric=1000
-        #     ignore-auto-dns=true
-        #     never-default=true
-
-        #     [ipv6]
-        #     method=manual
-        #     address1=${vpnIPv6WithMask}
-        #     route-metric=1000
-        #     ignore-auto-dns=true
-        #     never-default=true
-        #   '';
-        #   mode = "0600";
-        # };
       };
 
       networking.useNetworkd = true;
