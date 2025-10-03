@@ -60,7 +60,6 @@ in
 
   config = mkIf cfg.enable (
     let
-      # derive your “constants” from options
       split4 = lib.splitString "/" cfg.subnets.ipv4;
       vpnIPv4Address = builtins.elemAt split4 0;
       vpnIPv4Mask = builtins.elemAt split4 1;
@@ -68,16 +67,6 @@ in
       split6 = lib.splitString "/" cfg.subnets.ipv6;
       vpnIPv6Address = builtins.elemAt split6 0;
       vpnIPv6Mask = builtins.elemAt split6 1;
-
-      vpnIPv4WithMask = cfg.subnets.ipv4;
-      vpnIPv6WithMask = cfg.subnets.ipv6;
-
-      wanIface = cfg.wanInterface;
-      lanIface = cfg.lanInterface;
-      vpnIface = cfg.vpnInterface;
-
-      # cfg.vpnInterface = cfg.vpnInterface;
-
     in
     {
       networking.useHostResolvConf = lib.mkForce false;
@@ -89,7 +78,7 @@ in
         ipv4.addresses = [
           {
             address = vpnIPv4Address;
-            prefixLength = 24;
+            prefixLength = vpnIPv4Mask;
           }
         ];
 
@@ -97,7 +86,7 @@ in
           addresses = [
             {
               address = vpnIPv6Address;
-              prefixLength = 64;
+              prefixLength = vpnIPv6Mask;
             }
           ];
         };
@@ -106,7 +95,7 @@ in
       networking.networkmanager.enable = false;
 
       boot.kernelModules = [
-        "vrf"
+        # "vrf"
         "ip6table_nat"
       ];
       boot.kernel.sysctl = {
@@ -271,12 +260,12 @@ in
             set -euo pipefail
             set -x
 
-            # Load subnet info (should set ${vpnIPv4WithMask} and ${vpnIPv6WithMask})
+            # Load subnet info (should set ${cfg.subnets.ipv4} and ${cfg.subnets.ipv6})
             . /etc/root/subnets.sh
 
             # Extract prefixes from /CIDR notation
-            IPV6_PREFIX=$(echo "${vpnIPv6WithMask}" | cut -d/ -f1 | cut -d: -f1-3):
-            IPV4_PREFIX=$(echo "${vpnIPv4WithMask}" | cut -d/ -f1 | cut -d. -f1-3)
+            IPV6_PREFIX=$(echo "${cfg.subnets.ipv6}" | cut -d/ -f1 | cut -d: -f1-3):
+            IPV4_PREFIX=$(echo "${cfg.subnets.ipv4}" | cut -d/ -f1 | cut -d. -f1-3)
 
             # Format: [source_port]="last_octet:destination_port"
             declare -A HOSTS_IPV4=(
@@ -353,8 +342,8 @@ in
             # Portforwards DNS
             ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
             ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
-            # MASQUERADE the traffic from ${vpnIPv4WithMask} to ${cfg.vpnInterface}
-            ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${vpnIPv4WithMask} -o ${cfg.vpnInterface} -j MASQUERADE
+            # MASQUERADE the traffic from ${cfg.subnets.ipv4} to ${cfg.vpnInterface}
+            ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${cfg.subnets.ipv4} -o ${cfg.vpnInterface} -j MASQUERADE
             # MSS clamping (mtu size forcing) 
             ${pkgs.iptables}/bin/iptables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 
@@ -492,7 +481,7 @@ in
           mkdir -p /var/lib/kea || true
           chmod 700 /var/lib/kea
           source /etc/root/subnets.sh
-          IPV4_ADDR="${vpnIPv4WithMask}"
+          IPV4_ADDR="${cfg.subnets.ipv4}"
 
           # Get network details from sipcalc
           NETWORK_INFO=$(${pkgs.sipcalc}/bin/sipcalc "''${IPV4_ADDR}")
@@ -564,7 +553,7 @@ in
           IPV6_ADDR=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
 
           source /etc/root/subnets.sh
-          IPV6_ADDR=${vpnIPv6WithMask}
+          IPV6_ADDR=${cfg.subnets.ipv6}
 
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR")
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | ${pkgs.gawk}/bin/awk '{print $5}')
@@ -589,8 +578,8 @@ in
       environment.etc = {
         "root/subnets.sh" = {
           source = pkgs.writeShellScript "subnets" ''
-            export IPV4_VPN_SUBNET_STATIC_WITH_MASK="${vpnIPv4WithMask}"
-            export IPV6_VPN_SUBNET_STATIC_WITH_MASK="${vpnIPv6WithMask}"
+            export IPV4_VPN_SUBNET_STATIC_WITH_MASK="${cfg.subnets.ipv4}"
+            export IPV6_VPN_SUBNET_STATIC_WITH_MASK="${cfg.subnets.ipv6}"
           '';
           mode = "0755";
         };
