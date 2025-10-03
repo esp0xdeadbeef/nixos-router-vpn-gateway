@@ -69,6 +69,9 @@ in
       lanIface = cfg.lanInterface;
       vpnIface = cfg.vpnInterface;
 
+      vpnNATInterface = cfg.lanInterface;
+      vpnInterface = cfg.vpnInterface;
+
       vpnConfBasePath = "/etc/vpn";
       vpnConfPath = "${vpnConfBasePath}/${vpnIface}.conf";
 
