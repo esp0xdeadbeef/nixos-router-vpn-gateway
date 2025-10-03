@@ -121,7 +121,7 @@ in
 
       # 3. Decode VPN config at boot
       systemd.services.write-vpn-config = {
-        description = "Decode VPN config from sops and write to ${conf.vpnProfile}";
+        description = "Decode VPN config from sops and write to ${cfg.vpnProfile}";
         wantedBy = [ "network-pre.target" ];
         before = [ "network-online.target" ];
         after = [ "local-fs.target" ];
@@ -165,7 +165,7 @@ in
 
           ExecStart = pkgs.writeShellScript "vpn-dispatcher-start" ''
             set -euxo pipefail
-            CONF=${conf.vpnProfile}
+            CONF=${cfg.vpnProfile}
 
             if grep -qE '^\[Interface\]' "$CONF"; then
               echo "[+] Detected WireGuard config"
@@ -194,7 +194,7 @@ in
 
           ExecStop = pkgs.writeShellScript "vpn-dispatcher-stop" ''
             set -euxo pipefail
-            CONF=${conf.vpnProfile}
+            CONF=${cfg.vpnProfile}
             if grep -qE '^\[Interface\]' "$CONF"; then
               ${pkgs.wireguard-tools}/bin/wg-quick down "$CONF" || true
             elif grep -qE '^(client|dev|proto|remote)' "$CONF"; then
