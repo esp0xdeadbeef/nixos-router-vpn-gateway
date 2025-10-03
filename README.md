@@ -33,39 +33,39 @@ in
 {
 
   boot.kernel.sysctl = {
-    "net.ipv6.conf.br-wan.accept_ra" = 0;
-    "net.ipv6.conf.br-lan.accept_ra" = 0;
+    "net.ipv6.conf.br-ens19.accept_ra" = 0;
+    "net.ipv6.conf.br-ens20.accept_ra" = 0;
   };
 
-  networking.bridges.br-wan.interfaces = [ "ens19" ];
-  networking.bridges.br-lan.interfaces = [ "ens20" ];
+  networking.bridges.br-ens19.interfaces = [ "ens19" ];
+  networking.bridges.br-ens20.interfaces = [ "ens20" ];
 
-  systemd.network.networks."br-lan" = {
-    matchConfig.Name = "br-lan";
+  systemd.network.networks."br-ens20" = {
+    matchConfig.Name = "br-ens20";
     linkConfig.RequiredForOnline = "no";
     networkConfig.DHCP = "no";
     networkConfig.IPv6AcceptRA = false;
   };
 
-  systemd.network.networks."br-wan" = {
-    matchConfig.Name = "br-wan";
+  systemd.network.networks."br-ens19" = {
+    matchConfig.Name = "br-ens19";
     linkConfig.RequiredForOnline = "no";
     networkConfig.DHCP = "no";
     networkConfig.IPv6AcceptRA = false;
   };
 
   # networking.vlans."ens19.3" = { id = 3; interface = "ens19"; };
-  # networking.bridges.br-wan.interfaces = [ "ens19.3" ];
+  # networking.bridges.br-ens19.interfaces = [ "ens19.3" ];
 
-  systemd.services."container@lan-to-vpn-1".serviceConfig.ConditionPathExists = "/etc/vpn/tun0.conf";
+  systemd.services."container@lan-to-vpn-<replaced-vpn-provider-name>".serviceConfig.ConditionPathExists = vpnConfPath;
 
-  containers.lan-to-vpn-1 = {
+  containers.lan-to-vpn-<replaced-vpn-provider-name> = {
     autoStart = true;
     privateNetwork = true;
 
     extraVeths = {
-      wan.hostBridge = "br-wan";
-      lan.hostBridge = "br-lan";
+      wan.hostBridge = "br-ens19";
+      lan.hostBridge = "br-ens20";
     };
 
     bindMounts."/etc/vpn" = {
@@ -80,10 +80,10 @@ in
         enable = true;
         wanInterface = "wan";
         lanInterface = "lan";
-        vpnInterface = "tun0";
-        vpnProfile = "/etc/vpn/tun0.conf";
-        subnets.ipv4 = "10.90.0.1/24";
-        subnets.ipv6 = "fd90:dead:beef::100/64";
+        vpnInterface = vpnInterface;
+        vpnProfile = vpnConfPath;
+        subnets.ipv4 = vpnIPv4WithMask;
+        subnets.ipv6 = vpnIPv6WithMask;
         dhcp4.enable = true;
         ra.enable = true;
       };
@@ -120,5 +120,6 @@ in
     };
   };
 }
+
 
 ```
