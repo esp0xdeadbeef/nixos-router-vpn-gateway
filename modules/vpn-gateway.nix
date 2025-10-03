@@ -694,53 +694,53 @@ in
         #   mode = "0600";
         # };
 
-        "NetworkManager/system-connections/${upstream_VPN_interface}.nmconnection" = lib.mkIf (!enableVRF) {
-          text = ''
-            [connection]
-            id=${upstream_VPN_interface}
-            type=ethernet
-            interface-name=${upstream_VPN_interface}
-            autoconnect=true
-            permissions=
+        # "NetworkManager/system-connections/${upstream_VPN_interface}.nmconnection" = lib.mkIf (!enableVRF) {
+        #   text = ''
+        #     [connection]
+        #     id=${upstream_VPN_interface}
+        #     type=ethernet
+        #     interface-name=${upstream_VPN_interface}
+        #     autoconnect=true
+        #     permissions=
 
-            [ipv4]
-            method=auto
-            route-metric=500
-            ignore-auto-dns=false
+        #     [ipv4]
+        #     method=auto
+        #     route-metric=500
+        #     ignore-auto-dns=false
 
-            [ipv6]
-            method=auto
-            route-metric=100
-            ignore-auto-dns=false
-          '';
-          mode = "0600";
-        };
+        #     [ipv6]
+        #     method=auto
+        #     route-metric=100
+        #     ignore-auto-dns=false
+        #   '';
+        #   mode = "0600";
+        # };
 
-        "NetworkManager/system-connections/${vpnNATInterface}.nmconnection" = lib.mkIf (!enableVRF) {
-          text = ''
-            [connection]
-            id=${vpnNATInterface}
-            type=ethernet
-            interface-name=${vpnNATInterface}
-            autoconnect=true
-            permissions=
+        # "NetworkManager/system-connections/${vpnNATInterface}.nmconnection" = lib.mkIf (!enableVRF) {
+        #   text = ''
+        #     [connection]
+        #     id=${vpnNATInterface}
+        #     type=ethernet
+        #     interface-name=${vpnNATInterface}
+        #     autoconnect=true
+        #     permissions=
 
-            [ipv4]
-            method=manual
-            address1=${vpnIPv4WithMask}
-            route-metric=1000
-            ignore-auto-dns=true
-            never-default=true
+        #     [ipv4]
+        #     method=manual
+        #     address1=${vpnIPv4WithMask}
+        #     route-metric=1000
+        #     ignore-auto-dns=true
+        #     never-default=true
 
-            [ipv6]
-            method=manual
-            address1=${vpnIPv6WithMask}
-            route-metric=1000
-            ignore-auto-dns=true
-            never-default=true
-          '';
-          mode = "0600";
-        };
+        #     [ipv6]
+        #     method=manual
+        #     address1=${vpnIPv6WithMask}
+        #     route-metric=1000
+        #     ignore-auto-dns=true
+        #     never-default=true
+        #   '';
+        #   mode = "0600";
+        # };
       };
 
       networking.useNetworkd = true;
