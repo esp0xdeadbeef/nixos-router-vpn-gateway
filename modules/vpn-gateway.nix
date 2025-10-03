@@ -104,7 +104,7 @@ in {
           # IPv4 masquerade
           ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${cfg.subnets.ipv4} -o ${cfg.vpnInterface} -j MASQUERADE
           # IPv6 masquerade (/128 tunnel NAT)
-          ${pkgs.ip6tables}/bin/ip6tables -t nat -A POSTROUTING -s ${cfg.subnets.ipv6} -o ${cfg.vpnInterface} -j MASQUERADE
+          ${pkgs.iptables}/bin/ip6tables -t nat -A POSTROUTING -s ${cfg.subnets.ipv6} -o ${cfg.vpnInterface} -j MASQUERADE
         '';
       };
     };
