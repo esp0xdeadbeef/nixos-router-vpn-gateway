@@ -70,7 +70,15 @@ in
     in
     {
       networking.useHostResolvConf = lib.mkForce false;
-      services.resolved.enable = true;
+
+      # output of ss -plant, was blasting / listening to shit over lan / wan.
+      services.resolved = {
+        enable = true;
+        llmnr = "no";
+        multicastDns = false;
+        fallbackDns = [ ];
+      };
+
       networking.useDHCP = lib.mkDefault false;
       networking.interfaces.wan.useDHCP = true;
 
