@@ -74,9 +74,10 @@ in
       # output of ss -plant, was blasting / listening to shit over lan / wan.
       services.resolved = {
         enable = true;
-        llmnr = "no";
-        multicastDns = false;
-        fallbackDns = [ ];
+        llmnr = "false";
+        extraConfig = ''
+          MulticastDNS=no
+        '';
       };
 
       networking.useDHCP = lib.mkDefault false;
