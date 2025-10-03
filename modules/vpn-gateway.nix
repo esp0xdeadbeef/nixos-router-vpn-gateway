@@ -36,15 +36,22 @@ in
       description = "Path to WireGuard/OpenVPN config file (e.g., /etc/vpn/tun0.conf)";
     };
 
-    subnets = {
-      ipv4 = mkOption {
-        type = types.str; # "10.90.0.1/24"
-        example = "10.90.0.1/24";
+    subnets = mkOption {
+      type = types.submodule {
+        options = {
+          ipv4 = mkOption {
+            type = types.str;
+            example = "10.90.0.1/24";
+            description = "IPv4 subnet with mask";
+          };
+          ipv6 = mkOption {
+            type = types.str;
+            example = "fd90:dead:beef::100/64";
+            description = "IPv6 subnet with mask";
+          };
+        };
       };
-      ipv6 = mkOption {
-        type = types.str; # "fd90:dead:beef::100/64"
-        example = "fd90:dead:beef::100/64";
-      };
+      description = "Subnets for the VPN tunnel";
     };
 
     dhcp4.enable = mkEnableOption "Enable DHCPv4";
@@ -69,7 +76,7 @@ in
       lanIface = cfg.lanInterface;
       vpnIface = cfg.vpnInterface;
 
-      cfg.vpnInterface = cfg.vpnInterface;
+      # cfg.vpnInterface = cfg.vpnInterface;
 
     in
     {
