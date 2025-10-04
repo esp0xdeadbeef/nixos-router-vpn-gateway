@@ -69,6 +69,7 @@ in
       vpnIPv6Mask = builtins.elemAt split6 1;
     in
     {
+      system.stateVersion = lib.mkDefault "25.05";
       networking.useHostResolvConf = lib.mkForce false;
 
       # output of ss -plant, was blasting / listening to shit over lan / wan.
