@@ -82,9 +82,9 @@ in
       };
 
       networking.useDHCP = lib.mkDefault false;
-      networking.interfaces."${wanInterface}".useDHCP = true;
+      networking.interfaces."${cfg.wanInterface}".useDHCP = true;
 
-      networking.interfaces."${lanInterface}" = {
+      networking.interfaces."${cfg.lanInterface}" = {
         ipv4.addresses = [
           {
             address = vpnIPv4Address;
