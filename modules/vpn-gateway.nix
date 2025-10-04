@@ -594,6 +594,7 @@ in
         nftables
         dhcpcd
         tmux
+        tshark
       ];
     }
   );
