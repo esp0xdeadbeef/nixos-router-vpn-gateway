@@ -186,6 +186,8 @@ in
               exit 1
             fi
 
+            sleep 20
+            # wait to stabilise the adapters.
             # fire vpn-ready only once
             if [ ! -e /run/vpn-ready.once ]; then
               systemctl start vpn-ready.target
@@ -270,9 +272,6 @@ in
             set -euo pipefail
             set -x
 
-            # Load subnet info (should set ${cfg.subnets.ipv4} and ${cfg.subnets.ipv6})
-            . /etc/root/subnets.sh
-
             # Extract prefixes from /CIDR notation
             IPV6_PREFIX=$(echo "${cfg.subnets.ipv6}" | cut -d/ -f1 | cut -d: -f1-3):
             IPV4_PREFIX=$(echo "${cfg.subnets.ipv4}" | cut -d/ -f1 | cut -d. -f1-3)
@@ -324,17 +323,19 @@ in
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
-        path = [ pkgs.networkmanager ];
+        path = [ pkgs.networkmanager pkgs.jq pkgs.systemd];
         serviceConfig = {
           ExecStart = pkgs.writeShellScript "update_iptables_v4" ''
             set -euo pipefail
             set -x
             # Get the current IP address of ${cfg.vpnInterface}
-            source /etc/root/subnets.sh
 
             # IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv4.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
             # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}"  | cut -d ':' -f 2 | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
-            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
+            # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
+
+            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${vpnInterface} ipv4 address (which contains dots)
+            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${vpnInterface}\").Server" | grep "\." )
             if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
                 # If it's empty or has '--', get the first hop's IPv4 address from traceroute and assign it to IPv4_DNS_VPN
                 IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
@@ -374,15 +375,10 @@ in
           ExecStart = pkgs.writeShellScript "update_iptables_v6" ''
             set -euo pipefail
             set -x
-            # Get the current IP address of ${cfg.vpnInterface}
-            source /etc/root/subnets.sh
-
-            # IPv6_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv6.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
-            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $1; exit}' | ${pkgs.util-linux}/bin/rev)
-
-            IPv6_INTERFACE_NATTED_LAN=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}' | cut -d '/' -f 1)
-            IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
-
+            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${vpnInterface} ipv6 address (which does NOT contain dots)
+            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${vpnInterface}\").Server" | grep -v "\." )
+            IPv6_INTERFACE_NATTED_LAN="${vpnIPv6Address}"
+            IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET="${cfg.subnets.ipv6}"
 
             # Check if the DNS setting is empty or if it contains '--'
             if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
@@ -490,7 +486,6 @@ in
           mkdir -p /etc/kea || true
           mkdir -p /var/lib/kea || true
           chmod 700 /var/lib/kea
-          source /etc/root/subnets.sh
           IPV4_ADDR="${cfg.subnets.ipv4}"
 
           # Get network details from sipcalc
@@ -562,7 +557,6 @@ in
           # Extract IPv6 address and subnet prefix for ${cfg.lanInterface}
           IPV6_ADDR=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
 
-          source /etc/root/subnets.sh
           IPV6_ADDR=${cfg.subnets.ipv6}
 
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR")
@@ -585,15 +579,6 @@ in
         '';
       };
 
-      environment.etc = {
-        "root/subnets.sh" = {
-          source = pkgs.writeShellScript "subnets" ''
-            export IPV4_VPN_SUBNET_STATIC_WITH_MASK="${cfg.subnets.ipv4}"
-            export IPV6_VPN_SUBNET_STATIC_WITH_MASK="${cfg.subnets.ipv6}"
-          '';
-          mode = "0755";
-        };
-      };
 
       networking.useNetworkd = true;
 
