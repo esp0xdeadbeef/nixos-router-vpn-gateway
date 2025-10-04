@@ -319,46 +319,166 @@ in
         };
       };
 
-      systemd.services.update_iptables_v4 = {
+      # systemd.services.update_iptables_v4 = {
+      #   wantedBy = [ "multi-user.target" ];
+      #   requires = [ "vpn-ready.target" ];
+      #   after = [ "vpn-ready.target" ];
+      #   path = [ pkgs.networkmanager pkgs.jq pkgs.systemd];
+      #   serviceConfig = {
+      #     ExecStart = pkgs.writeShellScript "update_iptables_v4" ''
+      #       set -euo pipefail
+      #       set -x
+      #       # Get the current IP address of ${cfg.vpnInterface}
+
+      #       # IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv4.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
+      #       # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}"  | cut -d ':' -f 2 | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
+      #       # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
+
+      #       # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${cfg.vpnInterface} ipv4 address (which contains dots)
+      #       IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep "\." )
+      #       if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
+      #           # If it's empty or has '--', get the first hop's IPv4 address from traceroute and assign it to IPv4_DNS_VPN
+      #           IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+      #           echo "IPV4 Tunnel IP: $IPv4_DNS_VPN"
+      #       fi
+
+      #       # logging for DNS:
+      #       echo "IPv4_DNS_VPN: $IPv4_DNS_VPN"
+
+      #       # Flush old rules for port 53 forwarding
+      #       ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
+      #       ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
+      #       # Allow forwarding to self
+      #       ${pkgs.iptables}/bin/iptables -I FORWARD -i ${cfg.lanInterface} -o ${cfg.lanInterface} -j ACCEPT
+      #       # Portforwards DNS
+      #       ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
+      #       ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
+      #       # MASQUERADE the traffic from ${cfg.subnets.ipv4} to ${cfg.vpnInterface}
+      #       ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${cfg.subnets.ipv4} -o ${cfg.vpnInterface} -j MASQUERADE
+      #       # MSS clamping (mtu size forcing) 
+      #       ${pkgs.iptables}/bin/iptables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+
+      #     '';
+      #     Type = "oneshot";
+      #     RemainAfterExit = true;
+      #     Restart = "on-failure";
+      #     RestartSec = 10;
+      #   };
+      # };
+      # systemd.services.update_iptables_v6 = {
+      #   wantedBy = [ "multi-user.target" ];
+      #   requires = [ "vpn-ready.target" ];
+      #   after = [ "vpn-ready.target" ];
+      #   path = [ pkgs.networkmanager ];
+      #   serviceConfig = {
+      #     ExecStart = pkgs.writeShellScript "update_iptables_v6" ''
+      #       set -euo pipefail
+      #       set -x
+      #       # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${cfg.vpnInterface} ipv6 address (which does NOT contain dots)
+      #       IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep -v "\." )
+      #       IPv6_INTERFACE_NATTED_LAN="${vpnIPv6Address}"
+      #       IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET="${cfg.subnets.ipv6}"
+
+      #       # Check if the DNS setting is empty or if it contains '--'
+      #       if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
+      #           # If it's empty or has '--', get the first hop's IPv6 address from traceroute and assign it to IPv6_DNS_VPN
+      #           IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+      #           echo "IPV6 Tunnel IP: $IPv6_DNS_VPN"
+      #       fi
+
+      #       # logging for DNS:
+      #       echo "IPv6_DNS_VPN: $IPv6_DNS_VPN"
+
+
+
+      #       # Flush old rules for port 53 forwarding
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
+
+      #       # allow callbacks on the adapter itself
+      #       ${pkgs.iptables}/bin/ip6tables -I FORWARD -i ${cfg.lanInterface} -o ${cfg.lanInterface} -j ACCEPT
+      #       # Add new rules with the current IP address
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
+
+      #       # DNAT any incoming UDP or TCP DNS on ${cfg.lanInterface} to the real VPN DNS server
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
+      #       ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -p udp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
+      #       ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -p tcp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
+
+      #       # All traffic from LAN to VPN
+      #       ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -j ACCEPT
+
+      #       # Return traffic
+      #       ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.vpnInterface} -o ${cfg.lanInterface} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+      #       # Accept return traffic
+      #       ${pkgs.iptables}/bin/ip6tables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+      #       ${pkgs.iptables}/bin/ip6tables -t nat -A POSTROUTING -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -o ${cfg.vpnInterface} -j MASQUERADE
+
+
+      #       ${pkgs.iptables}/bin/ip6tables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+      #       ${pkgs.iptables}/bin/ip6tables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p udp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+      #     '';
+      #     Type = "oneshot";
+      #     RemainAfterExit = true;
+      #     Restart = "on-failure";
+      #     RestartSec = 10;
+      #   };
+      # };
+            systemd.services.update_nftables_v4 = {
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
-        path = [ pkgs.networkmanager pkgs.jq pkgs.systemd];
+        path = [ pkgs.networkmanager pkgs.jq pkgs.systemd pkgs.nftables pkgs.traceroute pkgs.gawk pkgs.util-linux ];
         serviceConfig = {
-          ExecStart = pkgs.writeShellScript "update_iptables_v4" ''
+          ExecStart = pkgs.writeShellScript "update_nftables_v4" ''
             set -euo pipefail
             set -x
-            # Get the current IP address of ${cfg.vpnInterface}
 
-            # IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv4.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
-            # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}"  | cut -d ':' -f 2 | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
-            # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
-
-            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${cfg.vpnInterface} ipv4 address (which contains dots)
-            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep "\." )
+            # resolve the current DNS / tunnel endpoint for IPv4
+            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
+              ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
+              grep "\." || true)
             if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
-                # If it's empty or has '--', get the first hop's IPv4 address from traceroute and assign it to IPv4_DNS_VPN
-                IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-                echo "IPV4 Tunnel IP: $IPv4_DNS_VPN"
+              IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com |
+                tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
             fi
+            echo "IPv4_DNS_VPN=$IPv4_DNS_VPN"
 
-            # logging for DNS:
-            echo "IPv4_DNS_VPN: $IPv4_DNS_VPN"
+            # create nft ruleset (atomic replace)
+            tmpfile=$(mktemp)
+            cat >"$tmpfile" <<'NFT'
+table ip vpn {
+  chain prerouting {
+    type nat hook prerouting priority dstnat;
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to $IPv4_DNS_VPN
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to $IPv4_DNS_VPN
+  }
 
-            # Flush old rules for port 53 forwarding
-            ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
-            ${pkgs.iptables}/bin/iptables -t nat -D PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN || true
-            # Allow forwarding to self
-            ${pkgs.iptables}/bin/iptables -I FORWARD -i ${cfg.lanInterface} -o ${cfg.lanInterface} -j ACCEPT
-            # Portforwards DNS
-            ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
-            ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv4_DNS_VPN
-            # MASQUERADE the traffic from ${cfg.subnets.ipv4} to ${cfg.vpnInterface}
-            ${pkgs.iptables}/bin/iptables -t nat -A POSTROUTING -s ${cfg.subnets.ipv4} -o ${cfg.vpnInterface} -j MASQUERADE
-            # MSS clamping (mtu size forcing) 
-            ${pkgs.iptables}/bin/iptables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+  chain postrouting {
+    type nat hook postrouting priority srcnat;
+    ip saddr ${cfg.subnets.ipv4} oifname "${cfg.vpnInterface}" masquerade
+  }
 
+  chain forward {
+    type filter hook forward priority 0;
+    iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
+    iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" tcp flags syn tcp option maxseg size set rt mtu
+  }
+}
+NFT
+            # interpolate cfg vars safely
+            sed -i \
+              -e "s|\${cfg.lanInterface}|${cfg.lanInterface}|g" \
+              -e "s|\${cfg.vpnInterface}|${cfg.vpnInterface}|g" \
+              -e "s|\${cfg.subnets.ipv4}|${cfg.subnets.ipv4}|g" \
+              "$tmpfile"
 
+            ${pkgs.nftables}/bin/nft -f "$tmpfile"
+            rm -f "$tmpfile"
           '';
           Type = "oneshot";
           RemainAfterExit = true;
@@ -366,60 +486,56 @@ in
           RestartSec = 10;
         };
       };
-      systemd.services.update_iptables_v6 = {
+
+      systemd.services.update_nftables_v6 = {
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
-        path = [ pkgs.networkmanager ];
+        path = [ pkgs.networkmanager pkgs.jq pkgs.systemd pkgs.nftables pkgs.traceroute pkgs.gawk pkgs.util-linux ];
         serviceConfig = {
-          ExecStart = pkgs.writeShellScript "update_iptables_v6" ''
+          ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
             set -euo pipefail
             set -x
-            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${cfg.vpnInterface} ipv6 address (which does NOT contain dots)
-            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep -v "\." )
-            IPv6_INTERFACE_NATTED_LAN="${vpnIPv6Address}"
-            IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET="${cfg.subnets.ipv6}"
 
-            # Check if the DNS setting is empty or if it contains '--'
+            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
+              ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
+              grep -v "\." || true)
             if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
-                # If it's empty or has '--', get the first hop's IPv6 address from traceroute and assign it to IPv6_DNS_VPN
-                IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-                echo "IPV6 Tunnel IP: $IPv6_DNS_VPN"
+              IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com |
+                tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
             fi
+            echo "IPv6_DNS_VPN=$IPv6_DNS_VPN"
 
-            # logging for DNS:
-            echo "IPv6_DNS_VPN: $IPv6_DNS_VPN"
+            tmpfile=$(mktemp)
+            cat >"$tmpfile" <<'NFT'
+table ip6 vpn {
+  chain prerouting {
+    type nat hook prerouting priority dstnat;
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to [$IPv6_DNS_VPN]:53
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to [$IPv6_DNS_VPN]:53
+  }
 
+  chain postrouting {
+    type nat hook postrouting priority srcnat;
+    ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
+  }
 
+  chain forward {
+    type filter hook forward priority 0;
+    iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
+    iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" tcp flags syn tcp option maxseg size set rt mtu
+  }
+}
+NFT
+            sed -i \
+              -e "s|\${cfg.lanInterface}|${cfg.lanInterface}|g" \
+              -e "s|\${cfg.vpnInterface}|${cfg.vpnInterface}|g" \
+              -e "s|\${cfg.subnets.ipv6}|${cfg.subnets.ipv6}|g" \
+              -e "s|\$IPv6_DNS_VPN|$IPv6_DNS_VPN|g" \
+              "$tmpfile"
 
-            # Flush old rules for port 53 forwarding
-            ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
-            ${pkgs.iptables}/bin/ip6tables -t nat -D PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN || true
-
-            # allow callbacks on the adapter itself
-            ${pkgs.iptables}/bin/ip6tables -I FORWARD -i ${cfg.lanInterface} -o ${cfg.lanInterface} -j ACCEPT
-            # Add new rules with the current IP address
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -j DNAT --to-destination $IPv6_DNS_VPN
-
-            # DNAT any incoming UDP or TCP DNS on ${cfg.lanInterface} to the real VPN DNS server
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p udp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
-            ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.lanInterface} -p tcp --dport 53 -d $IPv6_INTERFACE_NATTED_LAN -j DNAT --to-destination "[$IPv6_DNS_VPN]:53"
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -p udp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -p tcp --dport 53 -d $IPv6_DNS_VPN -j ACCEPT
-
-            # All traffic from LAN to VPN
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.lanInterface} -o ${cfg.vpnInterface} -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -j ACCEPT
-
-            # Return traffic
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -i ${cfg.vpnInterface} -o ${cfg.lanInterface} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-
-            # Accept return traffic
-            ${pkgs.iptables}/bin/ip6tables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
-            ${pkgs.iptables}/bin/ip6tables -t nat -A POSTROUTING -s $IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET -o ${cfg.vpnInterface} -j MASQUERADE
-
-
-            ${pkgs.iptables}/bin/ip6tables -t mangle -A FORWARD -o ${cfg.vpnInterface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+            ${pkgs.nftables}/bin/nft -f "$tmpfile"
+            rm -f "$tmpfile"
           '';
           Type = "oneshot";
           RemainAfterExit = true;
@@ -427,6 +543,7 @@ in
           RestartSec = 10;
         };
       };
+
 
       systemd.services.kea-dhcp4 = {
         description = "Kea DHCPv4 Server";
