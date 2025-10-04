@@ -334,8 +334,8 @@ in
             # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}"  | cut -d ':' -f 2 | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
             # IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl dns "${cfg.vpnInterface}" | ${pkgs.util-linux}/bin/rev | ${pkgs.gawk}/bin/awk '{print $2; exit}' | ${pkgs.util-linux}/bin/rev)
 
-            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${vpnInterface} ipv4 address (which contains dots)
-            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${vpnInterface}\").Server" | grep "\." )
+            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${cfg.vpnInterface} ipv4 address (which contains dots)
+            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep "\." )
             if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
                 # If it's empty or has '--', get the first hop's IPv4 address from traceroute and assign it to IPv4_DNS_VPN
                 IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
@@ -375,8 +375,8 @@ in
           ExecStart = pkgs.writeShellScript "update_iptables_v6" ''
             set -euo pipefail
             set -x
-            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${vpnInterface} ipv6 address (which does NOT contain dots)
-            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${vpnInterface}\").Server" | grep -v "\." )
+            # jq will parse the json output of resolvectl, which contains interfaces, we are only interested in the ${cfg.vpnInterface} ipv6 address (which does NOT contain dots)
+            IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep -v "\." )
             IPv6_INTERFACE_NATTED_LAN="${vpnIPv6Address}"
             IPv6_INTERFACE_NATTED_LAN_WITH_SUBNET="${cfg.subnets.ipv6}"
 
