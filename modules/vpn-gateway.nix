@@ -97,7 +97,7 @@ in
         "L+ /etc/resolv.conf - - - - /run/NetworkManager/resolv.conf"
       ];
       systemd.services.resolvconf.enable = false;
-      
+
       networking.useNetworkd = false;
       networking.useDHCP = lib.mkForce false;
       networking.useHostResolvConf = lib.mkForce false;
@@ -116,14 +116,10 @@ in
             [ipv4]
             method=auto
             route-metric=300
-            ignore-auto-dns=true
-            never-default=true
 
             [ipv6]
             method=auto
             route-metric=300
-            ignore-auto-dns=true
-            never-default=true
           '';
         };
 
