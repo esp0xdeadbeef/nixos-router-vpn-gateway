@@ -206,16 +206,88 @@ in
         };
       };
 
+      # systemd.services.vpn-dispatcher = {
+      #   description = "Bring up VPN tunnel (${cfg.vpnInterface}) and signal vpn-ready.target";
+      #   # after = [
+      #   #   "write-vpn-config.service"
+      #   #   "systemd-networkd.service"
+      #   # ];
+      #   # requires = [
+      #   #   "write-vpn-config.service"
+      #   #   "systemd-networkd.service"
+      #   # ];
+      #   after = [
+      #     "write-vpn-config.service"
+      #     "NetworkManager-wait-online.service"
+      #   ];
+      #   requires = [
+      #     "write-vpn-config.service"
+      #     "NetworkManager-wait-online.service"
+      #   ];
+
+      #   wantedBy = [ "multi-user.target" ];
+
+      #   path = with pkgs; [
+      #     iproute2
+      #     coreutils
+      #     gawk
+      #     wireguard-tools
+      #     openvpn
+      #     systemd
+      #     nftables
+      #   ];
+
+      #   serviceConfig = {
+      #     Type = "oneshot";
+      #     RemainAfterExit = true; # keeps it “active” once setup succeeds
+      #     Restart = "on-failure"; # rerun if setup fails
+      #     RestartSec = 10;
+
+      #     ExecStart = pkgs.writeShellScript "vpn-dispatcher-start" ''
+      #       set -euxo pipefail
+      #       CONF=${cfg.vpnProfile}
+
+      #       if grep -qE '^\[Interface\]' "$CONF"; then
+      #         echo "[+] Detected WireGuard config"
+      #         ${pkgs.wireguard-tools}/bin/wg-quick up "$CONF"
+      #       elif grep -qE '^(client|dev|proto|remote)' "$CONF"; then
+      #         echo "[+] Detected OpenVPN config"
+      #         ${pkgs.openvpn}/bin/openvpn --config "$CONF" --daemon
+      #         sleep 2
+      #       else
+      #         echo "[!] Unknown VPN config format"
+      #         exit 1
+      #       fi
+
+      #       # confirm interface exists
+      #       if ! ip link show "${cfg.vpnInterface}" > /dev/null 2>&1; then
+      #         echo "[!] ${cfg.vpnInterface} not present after bringup"
+      #         exit 1
+      #       fi
+
+      #       sleep 20
+      #       # wait to stabilise the adapters.
+      #       # fire vpn-ready only once
+      #       if [ ! -e /run/vpn-ready.once ]; then
+      #         systemctl start vpn-ready.target
+      #         touch /run/vpn-ready.once
+      #       fi
+      #     '';
+
+      #     ExecStop = pkgs.writeShellScript "vpn-dispatcher-stop" ''
+      #       set -euxo pipefail
+      #       CONF=${cfg.vpnProfile}
+      #       if grep -qE '^\[Interface\]' "$CONF"; then
+      #         ${pkgs.wireguard-tools}/bin/wg-quick down "$CONF" || true
+      #       elif grep -qE '^(client|dev|proto|remote)' "$CONF"; then
+      #         pkill -f "openvpn --config $CONF" || true
+      #       fi
+      #     '';
+      #   };
+      # };
+
       systemd.services.vpn-dispatcher = {
         description = "Bring up VPN tunnel (${cfg.vpnInterface}) and signal vpn-ready.target";
-        # after = [
-        #   "write-vpn-config.service"
-        #   "systemd-networkd.service"
-        # ];
-        # requires = [
-        #   "write-vpn-config.service"
-        #   "systemd-networkd.service"
-        # ];
         after = [
           "write-vpn-config.service"
           "NetworkManager-wait-online.service"
@@ -224,50 +296,73 @@ in
           "write-vpn-config.service"
           "NetworkManager-wait-online.service"
         ];
-
         wantedBy = [ "multi-user.target" ];
 
         path = with pkgs; [
           iproute2
           coreutils
           gawk
-          wireguard-tools
-          openvpn
-          systemd
-          nftables
+          networkmanager
         ];
 
         serviceConfig = {
           Type = "oneshot";
-          RemainAfterExit = true; # keeps it “active” once setup succeeds
-          Restart = "on-failure"; # rerun if setup fails
+          RemainAfterExit = true;
+          Restart = "on-failure";
           RestartSec = 10;
 
           ExecStart = pkgs.writeShellScript "vpn-dispatcher-start" ''
             set -euxo pipefail
             CONF=${cfg.vpnProfile}
+            IFACE=${cfg.vpnInterface}
+            UUID_FILE=/run/vpn-nm.uuid
 
+            # Delete any old connection that already uses the target name
+            if nmcli -t -f NAME con show | grep -qx "$IFACE"; then
+              nmcli con down "$IFACE" || true
+              nmcli con delete "$IFACE" || true
+            fi
+
+            # Snapshot UUID set before import
+            BEFORE=$(nmcli -t -f UUID con show | sort || true)
+
+            # Import as wireguard or openvpn
             if grep -qE '^\[Interface\]' "$CONF"; then
-              echo "[+] Detected WireGuard config"
-              ${pkgs.wireguard-tools}/bin/wg-quick up "$CONF"
+              nmcli connection import type wireguard file "$CONF"
             elif grep -qE '^(client|dev|proto|remote)' "$CONF"; then
-              echo "[+] Detected OpenVPN config"
-              ${pkgs.openvpn}/bin/openvpn --config "$CONF" --daemon
-              sleep 2
+              nmcli connection import type openvpn file "$CONF"
             else
-              echo "[!] Unknown VPN config format"
+              echo "[!] Unknown VPN config format: $CONF"
               exit 1
             fi
 
-            # confirm interface exists
-            if ! ip link show "${cfg.vpnInterface}" > /dev/null 2>&1; then
-              echo "[!] ${cfg.vpnInterface} not present after bringup"
+            # Find the newly created UUID by set-diff
+            AFTER=$(nmcli -t -f UUID con show | sort)
+            NEW_UUID=$(comm -13 <(printf "%s\n" "$BEFORE") <(printf "%s\n" "$AFTER") | tail -n1)
+            if [ -z "''${NEW_UUID:-}" ]; then
+              echo "[!] Could not determine imported connection UUID"
               exit 1
             fi
 
-            sleep 20
-            # wait to stabilise the adapters.
-            # fire vpn-ready only once
+            # Force the connection.id and interface-name to desired values
+            nmcli con modify "$NEW_UUID" connection.id "$IFACE"
+            nmcli con modify "$NEW_UUID" connection.interface-name "$IFACE"
+            nmcli con modify "$NEW_UUID" connection.autoconnect yes
+
+            # Bring it up by UUID, then persist UUID for ExecStop
+            nmcli con up "$NEW_UUID"
+            echo "$NEW_UUID" > "$UUID_FILE"
+
+            # Wait until the kernel device exists
+            for i in $(seq 1 20); do
+              if ip link show "$IFACE" >/dev/null 2>&1; then
+                break
+              fi
+              sleep 1
+            done
+            ip link show "$IFACE" >/dev/null 2>&1 || { echo "[!] $IFACE did not appear"; exit 1; }
+
+            # Signal ready once
             if [ ! -e /run/vpn-ready.once ]; then
               systemctl start vpn-ready.target
               touch /run/vpn-ready.once
@@ -276,15 +371,21 @@ in
 
           ExecStop = pkgs.writeShellScript "vpn-dispatcher-stop" ''
             set -euxo pipefail
-            CONF=${cfg.vpnProfile}
-            if grep -qE '^\[Interface\]' "$CONF"; then
-              ${pkgs.wireguard-tools}/bin/wg-quick down "$CONF" || true
-            elif grep -qE '^(client|dev|proto|remote)' "$CONF"; then
-              pkill -f "openvpn --config $CONF" || true
+            UUID_FILE=/run/vpn-nm.uuid
+            if [ -f "$UUID_FILE" ]; then
+              UUID=$(cat "$UUID_FILE")
+              nmcli con down "$UUID" || true
+              nmcli con delete "$UUID" || true
+              rm -f "$UUID_FILE"
+            else
+              # Fallback by name if UUID not found
+              nmcli con down ${cfg.vpnInterface} || true
+              nmcli con delete ${cfg.vpnInterface} || true
             fi
           '';
         };
       };
+
       systemd.services.vpn-check = {
         description = "Check VPN interface health via RX monitoring, fallback to ping if needed";
         serviceConfig = {
@@ -527,12 +628,12 @@ in
                   set -euo pipefail
                   set -x
 
-                  # Skip flush if wg-quick already owns hooks
-                  if ${pkgs.nftables}/bin/nft list tables | grep -q "wg-quick-${cfg.vpnInterface}"; then
-                    echo "[update_nftables_v4] wg-quick table detected, skipping flush"
-                  else
-                    ${pkgs.nftables}/bin/nft flush table ip vpn 2>/dev/null || true
-                  fi
+                  # # Skip flush if wg-quick already owns hooks
+                  # if ${pkgs.nftables}/bin/nft list tables | grep -q "wg-quick-${cfg.vpnInterface}"; then
+                  #   echo "[update_nftables_v4] wg-quick table detected, skipping flush"
+                  # else
+                  ${pkgs.nftables}/bin/nft flush table ip vpn 2>/dev/null || true
+                  # fi
 
                   # Discover current VPN IPv4 DNS endpoint
                   IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
