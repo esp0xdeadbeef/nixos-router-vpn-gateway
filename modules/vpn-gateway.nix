@@ -303,6 +303,7 @@ in
           coreutils
           gawk
           networkmanager
+          networkmanager-openvpn
         ];
 
         serviceConfig = {
