@@ -208,14 +208,23 @@ in
 
       systemd.services.vpn-dispatcher = {
         description = "Bring up VPN tunnel (${cfg.vpnInterface}) and signal vpn-ready.target";
+        # after = [
+        #   "write-vpn-config.service"
+        #   "systemd-networkd.service"
+        # ];
+        # requires = [
+        #   "write-vpn-config.service"
+        #   "systemd-networkd.service"
+        # ];
         after = [
           "write-vpn-config.service"
-          "systemd-networkd.service"
+          "NetworkManager-wait-online.service"
         ];
         requires = [
           "write-vpn-config.service"
-          "systemd-networkd.service"
+          "NetworkManager-wait-online.service"
         ];
+
         wantedBy = [ "multi-user.target" ];
 
         path = with pkgs; [
