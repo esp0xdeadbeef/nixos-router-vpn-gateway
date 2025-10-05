@@ -96,6 +96,8 @@ in
       systemd.tmpfiles.rules = [
         "L+ /etc/resolv.conf - - - - /run/NetworkManager/resolv.conf"
       ];
+      systemd.services.resolvconf.enable = false;
+      
       networking.useNetworkd = false;
       networking.useDHCP = lib.mkForce false;
       networking.useHostResolvConf = lib.mkForce false;
