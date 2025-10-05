@@ -428,64 +428,97 @@ in
       #     RestartSec = 10;
       #   };
       # };
-            systemd.services.update_nftables_v4 = {
-        wantedBy = [ "multi-user.target" ];
-        requires = [ "vpn-ready.target" ];
-        after = [ "vpn-ready.target" ];
-        path = [ pkgs.networkmanager pkgs.jq pkgs.systemd pkgs.nftables pkgs.traceroute pkgs.gawk pkgs.util-linux ];
-        serviceConfig = {
-          ExecStart = pkgs.writeShellScript "update_nftables_v4" ''
-            set -euo pipefail
-            set -x
+      systemd.services.update_nftables_v4 = {
+  wantedBy = [ "multi-user.target" ];
+  requires = [ "vpn-ready.target" "nftables.service" ];
+  after = [ "vpn-ready.target" "nftables.service" ];
 
-            # resolve the current DNS / tunnel endpoint for IPv4
-            IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
-              ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
-              grep "\." || true)
-            if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
-              IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com |
-                tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-            fi
-            echo "IPv4_DNS_VPN=$IPv4_DNS_VPN"
+  path = [
+    pkgs.networkmanager
+    pkgs.jq
+    pkgs.systemd
+    pkgs.nftables
+    pkgs.traceroute
+    pkgs.gawk
+    pkgs.util-linux
+  ];
 
-            # create nft ruleset (atomic replace)
-            tmpfile=$(mktemp)
-            cat >"$tmpfile" <<'NFT'
+  serviceConfig = {
+    Type = "oneshot";
+    RemainAfterExit = true;
+    Restart = "on-failure";
+    RestartSec = 10;
+
+    ExecStart = pkgs.writeShellScript "update_nftables_v4" ''
+      set -euo pipefail
+      set -x
+
+      # ---------------------------------------------------------------------
+      # Step 0: Clear conflicting legacy rulesets (iptables-nft compatibility)
+      # ---------------------------------------------------------------------
+      ${pkgs.nftables}/bin/nft flush ruleset || true
+
+      # ---------------------------------------------------------------------
+      # Step 1: Discover current VPN IPv4 DNS endpoint
+      # ---------------------------------------------------------------------
+      IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
+        ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
+        grep "\." || true)
+
+      if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
+        IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute \
+          --interface=${cfg.vpnInterface} -n4 -m 1 google.com |
+          tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+      fi
+      echo "[update_nftables_v4] Using VPN DNS endpoint: $IPv4_DNS_VPN"
+
+      # ---------------------------------------------------------------------
+      # Step 2: Generate temporary nft ruleset file
+      # ---------------------------------------------------------------------
+      tmpfile=$(mktemp)
+      cat >"$tmpfile" <<'NFT'
 table ip vpn {
   chain prerouting {
-    type nat hook prerouting priority dstnat;
+    type nat hook prerouting priority dstnat -100; policy accept;
     iifname "${cfg.lanInterface}" tcp dport 53 dnat to $IPv4_DNS_VPN
     iifname "${cfg.lanInterface}" udp dport 53 dnat to $IPv4_DNS_VPN
   }
 
   chain postrouting {
-    type nat hook postrouting priority srcnat;
+    type nat hook postrouting priority srcnat -100; policy accept;
     ip saddr ${cfg.subnets.ipv4} oifname "${cfg.vpnInterface}" masquerade
   }
 
   chain forward {
-    type filter hook forward priority 0;
+    type filter hook forward priority -100; policy accept;
     iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
     iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" tcp flags syn tcp option maxseg size set rt mtu
   }
 }
 NFT
-            # interpolate cfg vars safely
-            sed -i \
-              -e "s|\${cfg.lanInterface}|${cfg.lanInterface}|g" \
-              -e "s|\${cfg.vpnInterface}|${cfg.vpnInterface}|g" \
-              -e "s|\${cfg.subnets.ipv4}|${cfg.subnets.ipv4}|g" \
-              "$tmpfile"
 
-            ${pkgs.nftables}/bin/nft -f "$tmpfile"
-            rm -f "$tmpfile"
-          '';
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 10;
-        };
-      };
+      # ---------------------------------------------------------------------
+      # Step 3: Substitute variables safely into the nft template
+      # ---------------------------------------------------------------------
+      sed -i \
+        -e "s|\${cfg.lanInterface}|${cfg.lanInterface}|g" \
+        -e "s|\${cfg.vpnInterface}|${cfg.vpnInterface}|g" \
+        -e "s|\${cfg.subnets.ipv4}|${cfg.subnets.ipv4}|g" \
+        -e "s|\$IPv4_DNS_VPN|$IPv4_DNS_VPN|g" \
+        "$tmpfile"
+
+      # ---------------------------------------------------------------------
+      # Step 4: Apply rules atomically
+      # ---------------------------------------------------------------------
+      ${pkgs.nftables}/bin/nft -f "$tmpfile"
+
+      rm -f "$tmpfile"
+
+      echo "[update_nftables_v4] nftables ruleset applied successfully"
+    '';
+  };
+};
+
 
       systemd.services.update_nftables_v6 = {
         wantedBy = [ "multi-user.target" ];
