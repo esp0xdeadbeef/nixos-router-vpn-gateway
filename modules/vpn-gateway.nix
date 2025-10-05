@@ -448,13 +448,14 @@ in
                   set -euo pipefail
                   set -x
 
-                  # skip flush if wg-quick already owns hooks
+                  # Skip flush if wg-quick already owns hooks
                   if ${pkgs.nftables}/bin/nft list tables | grep -q "wg-quick-${cfg.vpnInterface}"; then
                     echo "[update_nftables_v4] wg-quick table detected, skipping flush"
                   else
                     ${pkgs.nftables}/bin/nft flush table ip vpn 2>/dev/null || true
                   fi
 
+                  # Discover current VPN IPv4 DNS endpoint
                   IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
                     ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
                     grep "\." | head -n1 || true)
@@ -463,15 +464,17 @@ in
                     IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com |
                       tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
                   fi
+
                   echo "[update_nftables_v4] Using VPN DNS endpoint: $IPv4_DNS_VPN"
 
+                  # Generate ruleset directly with expanded variables
                   tmpfile=$(mktemp)
-                  cat >"$tmpfile" <<'NFT'
+                  cat >"$tmpfile" <<NFT
             table ip vpn {
               chain prerouting {
                 type nat hook prerouting priority dstnat; policy accept;
-                iifname "${cfg.lanInterface}" tcp dport 53 dnat to $IPv4_DNS_VPN
-                iifname "${cfg.lanInterface}" udp dport 53 dnat to $IPv4_DNS_VPN
+                iifname "${cfg.lanInterface}" tcp dport 53 dnat to ${"$IPv4_DNS_VPN"}
+                iifname "${cfg.lanInterface}" udp dport 53 dnat to ${"$IPv4_DNS_VPN"}
               }
 
               chain postrouting {
@@ -490,13 +493,6 @@ in
               }
             }
             NFT
-
-                  sed -i \
-                    -e "s|\${cfg.lanInterface}|${cfg.lanInterface}|g" \
-                    -e "s|\${cfg.vpnInterface}|${cfg.vpnInterface}|g" \
-                    -e "s|\${cfg.subnets.ipv4}|${cfg.subnets.ipv4}|g" \
-                    -e "s|\$IPv4_DNS_VPN|$IPv4_DNS_VPN|g" \
-                    "$tmpfile"
 
                   ${pkgs.nftables}/bin/nft -f "$tmpfile"
                   rm -f "$tmpfile"
