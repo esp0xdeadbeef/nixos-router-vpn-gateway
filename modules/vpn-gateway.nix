@@ -70,39 +70,111 @@ in
     in
     {
       system.stateVersion = lib.mkDefault "25.05";
-      networking.useHostResolvConf = lib.mkForce false;
+
+      # Disable networkd-wait-online
+      systemd.services.systemd-networkd-wait-online.enable = pkgs.lib.mkForce false;
 
       # output of ss -plant, was blasting / listening to shit over lan / wan.
-      services.resolved = {
+      # services.resolved = {
+      #   enable = true;
+      #   llmnr = "false";
+      #   extraConfig = ''
+      #     MulticastDNS=no
+      #   '';
+      # };
+
+      # Disable systemd-resolved to avoid conflicts with NetworkManager DNS
+      services.resolved.enable = false;
+
+      # Tell NetworkManager to manage /etc/resolv.conf directly
+      networking.networkmanager = {
         enable = true;
-        llmnr = "false";
-        extraConfig = ''
-          MulticastDNS=no
-        '';
+        dns = "default"; # or "none" if you plan to manage resolv.conf manually
       };
 
-      networking.useDHCP = lib.mkDefault false;
-      networking.interfaces."${cfg.wanInterface}".useDHCP = true;
+      # Ensure /etc/resolv.conf points to NM’s version
+      systemd.tmpfiles.rules = [
+        "L+ /etc/resolv.conf - - - - /run/NetworkManager/resolv.conf"
+      ];
+      networking.useNetworkd = false;
+      networking.useDHCP = lib.mkForce false;
+      networking.useHostResolvConf = lib.mkForce false;
 
-      networking.interfaces."${cfg.lanInterface}" = {
-        ipv4.addresses = [
-          {
-            address = vpnIPv4Address;
-            prefixLength = lib.toIntBase10 vpnIPv4Mask;
-          }
-        ];
+      environment.etc = {
+        "NetworkManager/system-connections/${cfg.wanInterface}.nmconnection" = {
+          mode = "0600";
+          text = ''
+            [connection]
+            id=${cfg.wanInterface}
+            type=ethernet
+            interface-name=${cfg.wanInterface}
+            autoconnect=true
+            permissions=
 
-        ipv6 = {
-          addresses = [
-            {
-              address = vpnIPv6Address;
-              prefixLength = lib.toIntBase10 vpnIPv6Mask;
-            }
-          ];
+            [ipv4]
+            method=auto
+            route-metric=300
+            ignore-auto-dns=true
+            never-default=true
+
+            [ipv6]
+            method=auto
+            route-metric=300
+            ignore-auto-dns=true
+            never-default=true
+          '';
+        };
+
+        "NetworkManager/system-connections/${cfg.lanInterface}.nmconnection" = {
+          mode = "0600";
+          text = ''
+            [connection]
+            id=${cfg.lanInterface}
+            type=ethernet
+            interface-name=${cfg.lanInterface}
+            autoconnect=true
+            permissions=
+
+            [ipv4]
+            method=manual
+            address1=${cfg.subnets.ipv4}
+            route-metric=100
+            ignore-auto-dns=true
+
+            [ipv6]
+            method=manual
+            address1=${cfg.subnets.ipv6}
+            route-metric=100
+            ignore-auto-dns=true
+          '';
         };
       };
 
-      networking.networkmanager.enable = false;
+      # networking.useHostResolvConf = lib.mkForce false;
+      # networking.useNetworkd = true;
+
+      # networking.useDHCP = lib.mkDefault false;
+      # networking.interfaces."${cfg.wanInterface}".useDHCP = true;
+
+      # networking.interfaces."${cfg.lanInterface}" = {
+      #   ipv4.addresses = [
+      #     {
+      #       address = vpnIPv4Address;
+      #       prefixLength = lib.toIntBase10 vpnIPv4Mask;
+      #     }
+      #   ];
+
+      #   ipv6 = {
+      #     addresses = [
+      #       {
+      #         address = vpnIPv6Address;
+      #         prefixLength = lib.toIntBase10 vpnIPv6Mask;
+      #       }
+      #     ];
+      #   };
+      # };
+
+      # networking.networkmanager.enable = false;
 
       boot.kernelModules = [
         # "vrf"
@@ -717,11 +789,6 @@ in
           chmod 644 /etc/radvd.conf
         '';
       };
-
-      networking.useNetworkd = true;
-
-      # Disable networkd-wait-online
-      systemd.services.systemd-networkd-wait-online.enable = pkgs.lib.mkForce false;
 
       environment.systemPackages = with pkgs; [
         dnsutils
