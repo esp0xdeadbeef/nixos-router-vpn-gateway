@@ -426,14 +426,9 @@ in
       # };
       systemd.services.update_nftables_v4 = {
         wantedBy = [ "multi-user.target" ];
-        requires = [
-          "vpn-ready.target"
-          "nftables.service"
-        ];
-        after = [
-          "vpn-ready.target"
-          "nftables.service"
-        ];
+        requires = [ "vpn-ready.target" ];
+        after = [ "vpn-ready.target" ];
+
         path = [
           pkgs.jq
           pkgs.systemd
