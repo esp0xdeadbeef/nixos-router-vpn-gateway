@@ -707,17 +707,28 @@ ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
   ${pkgs.nftables}/bin/nft flush table ip6 vpn 2>/dev/null || true
 
   # Discover current VPN IPv6 DNS endpoint
-  IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v)
+  IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
+    | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
+    | gron | grep '"ipv6.dns"' | gron -v)
 
   if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
     IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | awk '{print $2}')
-    if [[ "$IPv6_DNS_VPN" == "*" ]]; then
-      echo "Overwriting with ipv4 address, the VPN provider did not provide an ipv6 DNS address."
-      IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
+    if [[ "$IPv6_DNS_VPN" == "*" || -z "$IPv6_DNS_VPN" ]]; then
+      echo "Overwriting with IPv4 address, the VPN provider did not provide an IPv6 DNS address."
+      IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
+        | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' \
+        | gron | grep '"ipv4.dns"' | gron -v)
     fi
   fi
 
   echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN"
+
+  # Detect address family (simple heuristic)
+  if [[ "$IPv6_DNS_VPN" =~ ":" ]]; then
+    DNAT_TARGET="[$IPv6_DNS_VPN]:53"
+  else
+    DNAT_TARGET="$IPv6_DNS_VPN:53"
+  fi
 
   # Generate ruleset directly with expanded variables
   tmpfile=$(mktemp)
@@ -725,8 +736,8 @@ ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
 table ip6 vpn {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-    iifname "${cfg.lanInterface}" tcp dport 53 dnat to [$IPv6_DNS_VPN]:53
-    iifname "${cfg.lanInterface}" udp dport 53 dnat to [$IPv6_DNS_VPN]:53
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to ${DNAT_TARGET}
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to ${DNAT_TARGET}
   }
 
   chain postrouting {
@@ -753,7 +764,6 @@ NFT
 
   echo "[update_nftables_v6] nftables ruleset applied successfully"
 '';
-
 
     };
   };
