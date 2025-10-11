@@ -736,8 +736,8 @@ ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
 table ip6 vpn {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-    iifname "${cfg.lanInterface}" tcp dport 53 dnat to ${DNAT_TARGET}
-    iifname "${cfg.lanInterface}" udp dport 53 dnat to ${DNAT_TARGET}
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to ${"$DNAT_TARGET"}
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to ${"$DNAT_TARGET"}
   }
 
   chain postrouting {
