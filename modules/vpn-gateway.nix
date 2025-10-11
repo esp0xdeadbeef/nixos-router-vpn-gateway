@@ -721,8 +721,8 @@ ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
   if [[ "$IPv6_DNS_VPN" =~ : ]]; then
     echo "[update_nftables_v6] Valid IPv6 DNS endpoint detected: $IPv6_DNS_VPN"
     DNAT_RULES=$(cat <<RULES
-    iifname "${cfg.lanInterface}" tcp dport 53 dnat to [${IPv6_DNS_VPN}]:53
-    iifname "${cfg.lanInterface}" udp dport 53 dnat to [${IPv6_DNS_VPN}]:53
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
 RULES
 )
   else
@@ -736,7 +736,7 @@ RULES
 table ip6 vpn {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-${DNAT_RULES}
+${"$DNAT_RULES"}
   }
 
   chain postrouting {
