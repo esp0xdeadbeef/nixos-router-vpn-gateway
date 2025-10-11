@@ -753,9 +753,9 @@ systemd.services.update_nftables_v6 = {
       rm -f "$tmpfile"
 
       echo "[update_nftables_v6] nftables ruleset applied successfully"
-    '';
+      '';
+    };
   };
-};
 
 
       systemd.services.kea-dhcp4 = {
