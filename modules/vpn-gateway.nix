@@ -791,7 +791,7 @@ NFT
 
           Type = "simple";
           Restart = "always"; # keep restarting no matter what
-          RestartSec = 1; # 1s between attempts
+          RestartSec = 20; # 20s between attempts
           # your ExecStart, ExecStartPost, etc...
           ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
             set -euo pipefail
