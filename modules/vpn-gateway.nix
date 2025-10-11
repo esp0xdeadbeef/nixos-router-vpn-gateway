@@ -679,6 +679,7 @@ in
           '';
         };
       };
+
 systemd.services.update_nftables_v6 = {
   wantedBy = [ "multi-user.target" ];
   requires = [ "vpn-ready.target" ];
@@ -709,35 +710,33 @@ ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
   # Discover current VPN IPv6 DNS endpoint
   IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
     | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
-    | gron | grep '"ipv6.dns"' | gron -v)
+    | gron | grep '"ipv6.dns"' | gron -v || true)
 
+  # Try traceroute fallback
   if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
-    IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | awk '{print $2}')
-    if [[ "$IPv6_DNS_VPN" == "*" || -z "$IPv6_DNS_VPN" ]]; then
-      echo "Overwriting with IPv4 address, the VPN provider did not provide an IPv6 DNS address."
-      IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
-        | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' \
-        | gron | grep '"ipv4.dns"' | gron -v)
-    fi
+    IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com 2>/dev/null | tail -n1 | awk '{print $2}')
   fi
 
-  echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN"
-
-  # Detect address family (simple heuristic)
-  if [[ "$IPv6_DNS_VPN" =~ ":" ]]; then
-    DNAT_TARGET="[$IPv6_DNS_VPN]:53"
+  # Check if it's valid IPv6
+  if [[ "$IPv6_DNS_VPN" =~ : ]]; then
+    echo "[update_nftables_v6] Valid IPv6 DNS endpoint detected: $IPv6_DNS_VPN"
+    DNAT_RULES=$(cat <<RULES
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to [${IPv6_DNS_VPN}]:53
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to [${IPv6_DNS_VPN}]:53
+RULES
+)
   else
-    DNAT_TARGET="$IPv6_DNS_VPN:53"
+    echo "[update_nftables_v6] No valid IPv6 DNS found (value: $IPv6_DNS_VPN). Skipping DNAT to avoid nft syntax errors."
+    DNAT_RULES=""
   fi
 
-  # Generate ruleset directly with expanded variables
+  # Generate nftables ruleset
   tmpfile=$(mktemp)
   cat >"$tmpfile" <<NFT
 table ip6 vpn {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-    iifname "${cfg.lanInterface}" tcp dport 53 dnat to ${"$DNAT_TARGET"}
-    iifname "${cfg.lanInterface}" udp dport 53 dnat to ${"$DNAT_TARGET"}
+${DNAT_RULES}
   }
 
   chain postrouting {
@@ -757,12 +756,12 @@ table ip6 vpn {
 }
 NFT
 
-  echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN, contents of the nft update:"
+  echo "[update_nftables_v6] nft ruleset preview:"
   cat "$tmpfile"
   nft -f "$tmpfile"
   rm -f "$tmpfile"
 
-  echo "[update_nftables_v6] nftables ruleset applied successfully"
+  echo "[update_nftables_v6] nftables IPv6 ruleset applied successfully"
 '';
 
     };
