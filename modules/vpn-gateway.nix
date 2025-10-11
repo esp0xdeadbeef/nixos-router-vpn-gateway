@@ -707,7 +707,7 @@ ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
   ${pkgs.nftables}/bin/nft flush table ip6 vpn 2>/dev/null || true
 
   # Discover current VPN IPv6 DNS endpoint
-  IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv6.dns"' | gron -v)
+  IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v)
 
   if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
     IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | awk '{print $2}')
