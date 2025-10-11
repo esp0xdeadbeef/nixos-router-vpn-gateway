@@ -700,60 +700,61 @@ systemd.services.update_nftables_v6 = {
     RemainAfterExit = true;
     Restart = "on-failure";
     RestartSec = 10;
+ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
+  set -euo pipefail
+  set -x
 
-    ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
-      set -euo pipefail
-      set -x
+  ${pkgs.nftables}/bin/nft flush table ip6 vpn 2>/dev/null || true
 
-      ${pkgs.nftables}/bin/nft flush table ip6 vpn 2>/dev/null || true
+  # Discover current VPN IPv6 DNS endpoint
+  IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv6.dns"' | gron -v)
 
-      # Discover current VPN IPv6 DNS endpoint
-      IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv6.dns"' | gron -v)
+  if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
+    IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | awk '{print $2}')
+    if [[ "$IPv6_DNS_VPN" == "*" ]]; then
+      echo "Overwriting with ipv4 address, the VPN provider did not provide an ipv6 DNS address."
+      IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
+    fi
+  fi
 
-      if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
-        IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | awk '{print $2}')
-				if [[ "$IPv6_DNS_VPN" == "*" ]]; then
-					echo "Overwriting with ipv4 address, the VPN provider did not provide an ipv6 DNS address."
-					IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
-				fi
-      fi
+  echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN"
 
-      echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN"
+  # Generate ruleset directly with expanded variables
+  tmpfile=$(mktemp)
+  cat >"$tmpfile" <<NFT
+table ip6 vpn {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "${cfg.lanInterface}" tcp dport 53 dnat to [$IPv6_DNS_VPN]:53
+    iifname "${cfg.lanInterface}" udp dport 53 dnat to [$IPv6_DNS_VPN]:53
+  }
 
-      # Generate ruleset directly with expanded variables
-      tmpfile=$(mktemp)
-      cat >"$tmpfile" <<NFT
-      table ip6 vpn {
-        chain prerouting {
-          type nat hook prerouting priority dstnat; policy accept;
-          iifname "${cfg.lanInterface}" tcp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
-          iifname "${cfg.lanInterface}" udp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
-        }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
+  }
 
-        chain postrouting {
-          type nat hook postrouting priority srcnat; policy accept;
-          ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
-        }
+  chain mangle_forward {
+    type filter hook forward priority mangle; policy accept;
+    tcp flags syn tcp option maxseg size set rt mtu
+  }
 
-        chain mangle_forward {
-          type filter hook forward priority mangle; policy accept;
-          tcp flags syn tcp option maxseg size set rt mtu
-        }
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
+  }
+}
+NFT
 
-        chain forward {
-          type filter hook forward priority 0; policy accept;
-          iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
-        }
-      }
-      NFT
+  echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN, contents of the nft update:"
+  cat "$tmpfile"
+  nft -f "$tmpfile"
+  rm -f "$tmpfile"
 
-      echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN, contents of the nft update:"
-			cat "$tmpfile"
-      nft -f "$tmpfile"
-      rm -f "$tmpfile"
+  echo "[update_nftables_v6] nftables ruleset applied successfully"
+'';
 
-      echo "[update_nftables_v6] nftables ruleset applied successfully"
-      '';
+
     };
   };
 
