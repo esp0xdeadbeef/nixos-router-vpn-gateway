@@ -714,7 +714,7 @@ systemd.services.update_nftables_v6 = {
         IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com | tail -n1 | awk '{print $2}')
 				if [[ "$IPv6_DNS_VPN" == "*" ]]; then
 					echo "Overwriting with ipv4 address, the VPN provider did not provide an ipv6 DNS address."
-					$IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
+					IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
 				fi
       fi
 
