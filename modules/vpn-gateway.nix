@@ -617,6 +617,9 @@ in
           pkgs.traceroute
           pkgs.gawk
           pkgs.util-linux
+          pkgs.gron
+          pkgs.jq
+          pkgs.networkmanager
         ];
 
         serviceConfig = {
@@ -626,31 +629,25 @@ in
           RestartSec = 10;
 
           ExecStart = pkgs.writeShellScript "update_nftables_v4" ''
-                  set -euo pipefail
-                  set -x
+            set -euo pipefail
+            set -x
 
-                  # # Skip flush if wg-quick already owns hooks
-                  # if ${pkgs.nftables}/bin/nft list tables | grep -q "wg-quick-${cfg.vpnInterface}"; then
-                  #   echo "[update_nftables_v4] wg-quick table detected, skipping flush"
-                  # else
-                  ${pkgs.nftables}/bin/nft flush table ip vpn 2>/dev/null || true
-                  # fi
+            ${pkgs.nftables}/bin/nft flush table ip vpn 2>/dev/null || true
 
-                  # Discover current VPN IPv4 DNS endpoint
-                  IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
-                    ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
-                    grep "\." | head -n1 || true)
+            # Discover current VPN IPv4 DNS endpoint
+            #IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli connection show ${cfg.vpnInterface} | grep 'ipv4.dns' | ${pkgs.gawk}/bin/awk '{print $2}' | head -n1)
+            IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
+            #IPv4_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state | jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" | grep "\." | head -n1 || true)
 
-                  if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
-                    IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com |
-                      tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-                  fi
+            if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
+              IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+            fi
 
-                  echo "[update_nftables_v4] Using VPN DNS endpoint: $IPv4_DNS_VPN"
+            echo "[update_nftables_v4] Using VPN DNS endpoint: $IPv4_DNS_VPN"
 
-                  # Generate ruleset directly with expanded variables
-                  tmpfile=$(mktemp)
-                  cat >"$tmpfile" <<NFT
+            # Generate ruleset directly with expanded variables
+            tmpfile=$(mktemp)
+            cat >"$tmpfile" <<NFT
             table ip vpn {
               chain prerouting {
                 type nat hook prerouting priority dstnat; policy accept;
@@ -675,78 +672,88 @@ in
             }
             NFT
 
-                  ${pkgs.nftables}/bin/nft -f "$tmpfile"
-                  rm -f "$tmpfile"
+            ${pkgs.nftables}/bin/nft -f "$tmpfile"
+            rm -f "$tmpfile"
 
-                  echo "[update_nftables_v4] nftables ruleset applied successfully"
+            echo "[update_nftables_v4] nftables ruleset applied successfully"
           '';
         };
       };
+systemd.services.update_nftables_v6 = {
+  wantedBy = [ "multi-user.target" ];
+  requires = [ "vpn-ready.target" ];
+  after = [ "vpn-ready.target" ];
 
-      systemd.services.update_nftables_v6 = {
-        wantedBy = [ "multi-user.target" ];
-        requires = [ "vpn-ready.target" ];
-        after = [ "vpn-ready.target" ];
-        path = [
-          pkgs.networkmanager
-          pkgs.jq
-          pkgs.systemd
-          pkgs.nftables
-          pkgs.traceroute
-          pkgs.gawk
-          pkgs.util-linux
-        ];
-        serviceConfig = {
-          ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
-                        set -euo pipefail
-                        set -x
+  path = [
+    pkgs.jq
+    pkgs.systemd
+    pkgs.nftables
+    pkgs.traceroute
+    pkgs.gawk
+    pkgs.util-linux
+    pkgs.gron
+    pkgs.networkmanager
+  ];
 
-                        IPv6_DNS_VPN=$(${pkgs.systemd}/bin/resolvectl -j show-server-state |
-                          ${pkgs.jq}/bin/jq -r ".[] | select(.Interface == \"${cfg.vpnInterface}\").Server" |
-                          grep -v "\." || true)
-                        if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
-                          IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com |
-                            tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-                        fi
-                        echo "IPv6_DNS_VPN=$IPv6_DNS_VPN"
+  serviceConfig = {
+    Type = "oneshot";
+    RemainAfterExit = true;
+    Restart = "on-failure";
+    RestartSec = 10;
 
-                        tmpfile=$(mktemp)
-                        cat >"$tmpfile" <<'NFT'
-            table ip6 vpn {
-              chain prerouting {
-                type nat hook prerouting priority dstnat;
-                iifname "${cfg.lanInterface}" tcp dport 53 dnat to [$IPv6_DNS_VPN]:53
-                iifname "${cfg.lanInterface}" udp dport 53 dnat to [$IPv6_DNS_VPN]:53
-              }
+    ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
+      set -euo pipefail
+      set -x
 
-              chain postrouting {
-                type nat hook postrouting priority srcnat;
-                ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
-              }
+      ${pkgs.nftables}/bin/nft flush table ip6 vpn 2>/dev/null || true
 
-              chain forward {
-                type filter hook forward priority 0;
-                iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
-                iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" tcp flags syn tcp option maxseg size set rt mtu
-              }
-            }
-            NFT
-                        sed -i \
-                          -e "s|\${cfg.lanInterface}|${cfg.lanInterface}|g" \
-                          -e "s|\${cfg.vpnInterface}|${cfg.vpnInterface}|g" \
-                          -e "s|\${cfg.subnets.ipv6}|${cfg.subnets.ipv6}|g" \
-                          -e "s|\$IPv6_DNS_VPN|$IPv6_DNS_VPN|g" \
-                          "$tmpfile"
+      # Discover current VPN IPv6 DNS endpoint
+      IPv6_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli -t -f all connection show ${cfg.vpnInterface} \
+        | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' \
+        | gron | grep '"ipv6.dns"' | gron -v)
 
-                        ${pkgs.nftables}/bin/nft -f "$tmpfile"
-                        rm -f "$tmpfile"
-          '';
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 10;
-        };
-      };
+      if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
+        IPv6_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com \
+          | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+      fi
+
+      echo "[update_nftables_v6] Using VPN DNS endpoint: $IPv6_DNS_VPN"
+
+      # Generate ruleset directly with expanded variables
+      tmpfile=$(mktemp)
+      cat >"$tmpfile" <<NFT
+      table ip6 vpn {
+        chain prerouting {
+          type nat hook prerouting priority dstnat; policy accept;
+          iifname "${cfg.lanInterface}" tcp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
+          iifname "${cfg.lanInterface}" udp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
+        }
+
+        chain postrouting {
+          type nat hook postrouting priority srcnat; policy accept;
+          ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
+        }
+
+        chain mangle_forward {
+          type filter hook forward priority mangle; policy accept;
+          tcp flags syn tcp option maxseg size set rt mtu
+        }
+
+        chain forward {
+          type filter hook forward priority 0; policy accept;
+          iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
+        }
+      }
+      NFT
+
+      ${pkgs.nftables}/bin/nft -f "$tmpfile"
+      rm -f "$tmpfile"
+
+      echo "[update_nftables_v6] nftables ruleset applied successfully"
+    '';
+  };
+};
+
 
       systemd.services.kea-dhcp4 = {
         description = "Kea DHCPv4 Server";
