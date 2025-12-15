@@ -536,7 +536,6 @@ in
 
         };
       };
-
       systemd.services.kea-dhcp4 = {
         description = "Kea DHCPv4 Server";
         wantedBy = [ "multi-user.target" ];
@@ -545,6 +544,7 @@ in
         path = [
           pkgs.kea
           pkgs.systemd
+          pkgs.gnugrep
         ];
         unitConfig = {
           StartLimitIntervalSec = 0;
@@ -554,32 +554,33 @@ in
           ExecStart = pkgs.writeShellScript "kea-dhcp4-execstart" ''
             set -euo pipefail
             set -x
-            mkdir -p /var/run/kea || true
-            ${pkgs.kea}/bin/kea-dhcp4 -c /etc/kea/kea-dhcp4.conf
+
+            mkdir -p /run/kea || true 
+            mkdir -p /var/lib/kea || true
+            chmod 0755 /run/kea
+
+            exec kea-dhcp4 -c /etc/kea/kea-dhcp4.conf
           '';
 
-          Type = "simple";
           Restart = "always";
-          RestartSec = 20;
+          RestartSec = 2;
           ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
             set -euo pipefail
-            LOG="$(${pkgs.systemd}/bin/journalctl -u kea-dhcp4 | tail -n 40)"
+            set -x
+            LOG=$(journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)")
 
-            if ! echo "$LOG" | ${pkgs.gnugrep}/bin/grep -q "listening on interface"; then
+            if ! echo "$LOG" | grep -q "listening on interface"; then
               echo "kea-dhcp4 not listening on any interface"
               exit 1
             fi
 
             sleep 3
-            LOG="$(${pkgs.systemd}/bin/journalctl -u kea-dhcp4 -n 40)"
-            if echo "$LOG" | ${pkgs.gnugrep}/bin/grep -q "DHCPSRV_OPEN_SOCKET_FAIL"; then
+            LOG=$(journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)")
+            if echo "$LOG" | grep -q "DHCPSRV_OPEN_SOCKET_FAIL"; then
               echo "kea-dhcp4 failed to open sockets"
               exit 1
             fi
-
           '';
-          RuntimeDirectory = "kea";
-          RuntimeDirectoryMode = "0755";
         };
 
         preStart = ''
