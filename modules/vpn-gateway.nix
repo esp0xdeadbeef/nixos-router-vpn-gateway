@@ -563,7 +563,7 @@ in
           '';
 
           Restart = "always";
-          RestartSec = 2;
+          RestartSec = 20;
           ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
             set -euo pipefail
             set -x
