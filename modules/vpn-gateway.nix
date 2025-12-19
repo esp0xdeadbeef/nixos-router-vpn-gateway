@@ -563,10 +563,12 @@ in
           '';
 
           Restart = "always";
-          RestartSec = 20;
+          RestartSec = 10;
           ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
             set -euo pipefail
             set -x
+            echo "sleeping 3 sec to let kea start."
+            sleep 3
             if ! journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)" | grep -v grep  | grep -q "listening on interface"; then
               echo "kea-dhcp4 not listening on any interface"
               exit 1
