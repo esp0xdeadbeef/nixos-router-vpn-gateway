@@ -565,21 +565,15 @@ in
           Restart = "always";
           RestartSec = 10;
           ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
+            #!/usr/bin/env bash
             set -euo pipefail
-            set -x
-            echo "sleeping 3 sec to let kea start."
-            sleep 3
-            if ! journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)" | grep -v grep  | grep -q "listening on interface"; then
-              echo "kea-dhcp4 not listening on any interface"
-              exit 1
-            fi
-
-            sleep 3
-            if journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)" | grep -v grep | grep -q "DHCPSRV_OPEN_SOCKET_FAIL"; then
-              echo "kea-dhcp4 failed to open sockets"
+            sleep 1
+            if ! ss -lunp | grep -q "${cfg.subnets.ipv4}:67"; then
+              echo "kea-dhcp4 not listening on ${cfg.lanInterface} (${cfg.subnets.ipv4}:67)"
               exit 1
             fi
           '';
+
         };
 
         preStart = ''
