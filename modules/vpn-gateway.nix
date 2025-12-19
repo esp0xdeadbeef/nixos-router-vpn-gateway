@@ -68,13 +68,30 @@ in
       vpnIPv6Mask = builtins.elemAt split6 1;
     in
     {
-      system.stateVersion = lib.mkDefault "25.05";
+      system.stateVersion = lib.mkDefault "25.11";
       systemd.services.systemd-networkd-wait-online.enable = pkgs.lib.mkForce false;
       services.resolved.enable = false;
 
       networking.networkmanager = {
         enable = true;
         dns = "default";
+        unmanaged = [
+          "interface-name:${cfg.lanInterface}"
+        ];
+      };
+      systemd.network.enable = true;
+
+      systemd.network.networks."20-${cfg.lanInterface}" = {
+        matchConfig.Name = cfg.lanInterface;
+
+        networkConfig = {
+          Address = [
+            cfg.subnets.ipv4
+            cfg.subnets.ipv6
+          ];
+          ConfigureWithoutCarrier = true;
+          IPv6AcceptRA = false;
+        };
       };
 
       systemd.tmpfiles.rules = [
@@ -82,7 +99,7 @@ in
       ];
       systemd.services.resolvconf.enable = false;
 
-      networking.useNetworkd = false;
+      networking.useNetworkd = true;
       networking.useDHCP = lib.mkForce false;
       networking.useHostResolvConf = lib.mkForce false;
 
