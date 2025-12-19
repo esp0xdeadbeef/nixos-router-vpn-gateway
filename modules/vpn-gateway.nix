@@ -570,7 +570,7 @@ in
             #!/usr/bin/env bash
             set -euo pipefail
             sleep 1
-            if ! ss -lunp | grep -q "${cfg.subnets.ipv4}:67"; then
+            if ! ss -lunp | grep -q "$(echo "''${cfg.subnets.ipv4}" | sed 's/\/.*//g'):67"; then
               echo "kea-dhcp4 not listening on ${cfg.lanInterface} (${cfg.subnets.ipv4}:67)"
               exit 1
             fi
