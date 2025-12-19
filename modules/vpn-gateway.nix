@@ -545,6 +545,8 @@ in
           pkgs.kea
           pkgs.systemd
           pkgs.gnugrep
+          pkgs.iproute2
+          pkgs.gawk
         ];
         unitConfig = {
           StartLimitIntervalSec = 0;
