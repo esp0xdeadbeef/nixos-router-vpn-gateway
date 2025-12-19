@@ -567,16 +567,13 @@ in
           ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
             set -euo pipefail
             set -x
-            LOG=$(journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)")
-
-            if ! echo "$LOG" | grep -q "listening on interface"; then
+            if ! journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)" | grep -v grep  | grep -q "listening on interface"; then
               echo "kea-dhcp4 not listening on any interface"
               exit 1
             fi
 
             sleep 3
-            LOG=$(journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)")
-            if echo "$LOG" | grep -q "DHCPSRV_OPEN_SOCKET_FAIL"; then
+            if journalctl -u kea-dhcp4 -b --since "$(systemctl show kea-dhcp4 -p InactiveEnterTimestamp --value)" | grep -v grep | grep -q "DHCPSRV_OPEN_SOCKET_FAIL"; then
               echo "kea-dhcp4 failed to open sockets"
               exit 1
             fi
