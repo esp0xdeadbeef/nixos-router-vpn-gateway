@@ -323,200 +323,61 @@ in
         };
       };
 
-      # TODO This doesn't work correctly (ipv4 and ipv6)
-      systemd.services.portforwards_v4 = {
-        wantedBy = [ "multi-user.target" ];
-        requires = [ "vpn-ready.target" ];
-        after = [ "vpn-ready.target" ];
-        serviceConfig = {
-          ExecStart = pkgs.writeShellScript "portforwards-v4-bin" ''
-            set -euo pipefail
-            set -x
+      networking.firewall.enable = false;
 
-            IPV4_PREFIX=$(echo "${cfg.subnets.ipv4}" | cut -d/ -f1 | cut -d. -f1-3)
+      networking.nftables = {
+        enable = true;
 
-            # Format: [source_port]="last_octet:destination_port"
-            declare -A HOSTS_IPV4=(
-              [21612]="109:22"
-              [21613]="167:80"
-              [21614]="163:443"
-            )
+        ruleset = ''
+          flush ruleset
 
-            for port in "''${!HOSTS_IPV4[@]}"; do
-              # ----- IPv4 Parsing -----
-              IFS=':' read -r ipv4_host dst_port_v4 <<< "''${HOSTS_IPV4[$port]}"
-              dst_port_v4="''${dst_port_v4:-$port}"
+          table inet filter {
 
-              # IPv4 rule
-              ${pkgs.iptables}/bin/iptables -t nat -A PREROUTING -i ${cfg.vpnInterface} -p tcp --dport "$port" \
-                -j DNAT --to-destination "$IPV4_PREFIX.$ipv4_host:$dst_port_v4"
-            done
-          '';
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 10;
-        };
-      };
+            chain input {
+              type filter hook input priority 0; policy drop;
 
-      systemd.services.portforwards_v6 = {
-        wantedBy = [ "multi-user.target" ];
-        requires = [ "vpn-ready.target" ];
-        after = [ "vpn-ready.target" ];
-        serviceConfig = {
-          ExecStart = pkgs.writeShellScript "portforwards-v6-bin" ''
-            set -euo pipefail
-            set -x
+              iif lo accept
+              ct state established,related accept
 
-            # Extract prefixes from /CIDR notation
-            IPV6_PREFIX=$(echo "${cfg.subnets.ipv6}" | cut -d/ -f1 | cut -d: -f1-3):
+              # LAN can talk to router
+              iifname "${cfg.lanInterface}" accept
 
-            # Format: [source_port]=":ipv6_suffix]:destination_port"
-            declare -A HOSTS_IPV6=(
-              [21612]=":a28f:aa25:f510:bdcb]:22"
-              [21613]=":be24:11ff:fe3d:474d]:80"
-              [21614]=":a133:c085:eeab:f2c1]:443"
-            )
-
-            for port in "''${!HOSTS_IPV4[@]}"; do
-              # ----- IPv6 Parsing -----
-              raw_ipv6_entry="''${HOSTS_IPV6[$port]}"
-              dst_port_v6="''${raw_ipv6_entry##*:}"                    # after last :
-              ipv6_host_suffix="''${raw_ipv6_entry%]:$dst_port_v6}"    # remove ]:<port>
-              ipv6_host_suffix="''${ipv6_host_suffix#:}"              # strip leading :
-
-              # ----- Rules -----
-
-              # IPv6 rule
-              ${pkgs.iptables}/bin/ip6tables -t nat -A PREROUTING -i ${cfg.vpnInterface} -p tcp --dport "$port" \
-                -j DNAT --to-destination "[$IPV6_PREFIX:$ipv6_host_suffix]:$dst_port_v6"
-            done
-          '';
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 10;
-        };
-      };
-
-      systemd.services.update_nftables_v4 = {
-        wantedBy = [ "multi-user.target" ];
-        requires = [ "vpn-ready.target" ];
-        after = [ "vpn-ready.target" ];
-        Restart = "on-failure";
-        RestartSec = 10;
-
-        path = [
-          pkgs.nftables
-          pkgs.iproute2
-          pkgs.gawk
-        ];
-
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-
-          ExecStart = pkgs.writeShellScript "update_nftables_v4" ''
-                  set -euo pipefail
-                  set -x
-
-                  LAN_IP=$(${pkgs.iproute2}/bin/ip -4 addr show dev ${cfg.lanInterface} \
-                    | ${pkgs.gawk}/bin/awk '/inet / {print $2}' | cut -d/ -f1)
-
-                  VPN_IP=$(${pkgs.iproute2}/bin/ip -4 addr show dev ${cfg.vpnInterface} \
-                    | ${pkgs.gawk}/bin/awk '/inet / {print $2}' | cut -d/ -f1)
-
-                  if [[ -z "$LAN_IP" || -z "$VPN_IP" ]]; then
-                    echo "Missing LAN or VPN IPv4 address"
-                    exit 1
-                  fi
-
-                  nft delete table inet lan_to_vpn_v4 2>/dev/null || true
-
-                  nft -f - <<NFT
-            table inet lan_to_vpn_v4 {
-
-              chain prerouting {
-                type nat hook prerouting priority dstnat; policy accept;
-
-                iifname "${cfg.lanInterface}" ip daddr $LAN_IP dnat to $VPN_IP
-              }
-
-              chain postrouting {
-                type nat hook postrouting priority srcnat; policy accept;
-                ip saddr ${cfg.subnets.ipv4} oifname "${cfg.vpnInterface}" masquerade
-              }
-
-              chain forward {
-                type filter hook forward priority 0; policy drop;
-                ct state established,related accept
-                iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" accept
-                iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
-              }
+              # Explicitly drop WAN → router
+              iifname "${cfg.wanInterface}" drop
             }
-            NFT
-          '';
-        };
-      };
 
-      systemd.services.update_nftables_v6 = {
-        wantedBy = [ "multi-user.target" ];
-        requires = [ "vpn-ready.target" ];
-        after = [ "vpn-ready.target" ];
-        Restart = "on-failure";
-        RestartSec = 10;
+            chain forward {
+              type filter hook forward priority 0; policy drop;
 
-        path = [
-          pkgs.nftables
-          pkgs.iproute2
-          pkgs.gawk
-        ];
+              ct state established,related accept
 
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
+              # LAN -> VPN
+              iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" accept
 
-          ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
-                  set -euo pipefail
-                  set -x
+              # VPN -> LAN (return traffic)
+              iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
 
-                  LAN_IP6=$(${pkgs.iproute2}/bin/ip -6 addr show dev ${cfg.lanInterface} \
-                    | ${pkgs.gawk}/bin/awk '/scope global/ {print $2}' | cut -d/ -f1 | head -n1)
+              # LAN must NEVER reach WAN
+              iifname "${cfg.lanInterface}" oifname "${cfg.wanInterface}" drop
 
-                  VPN_IP6=$(${pkgs.iproute2}/bin/ip -6 addr show dev ${cfg.vpnInterface} \
-                    | ${pkgs.gawk}/bin/awk '/scope global/ {print $2}' | cut -d/ -f1 | head -n1)
-
-                  if [[ -z "$LAN_IP6" || -z "$VPN_IP6" ]]; then
-                    echo "Missing LAN or VPN IPv6 address"
-                    exit 1
-                  fi
-
-                  nft delete table inet lan_to_vpn_v6 2>/dev/null || true
-
-                  nft -f - <<NFT
-            table inet lan_to_vpn_v6 {
-
-              chain prerouting {
-                type nat hook prerouting priority dstnat; policy accept;
-
-                iifname "${cfg.lanInterface}" ip6 daddr $LAN_IP6 dnat to [$VPN_IP6]
-              }
-
-              chain postrouting {
-                type nat hook postrouting priority srcnat; policy accept;
-                ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
-              }
-
-              chain forward {
-                type filter hook forward priority 0; policy drop;
-                ct state established,related accept
-                iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" accept
-                iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
-              }
+              # WAN must NEVER reach LAN
+              iifname "${cfg.wanInterface}" oifname "${cfg.lanInterface}" drop
             }
-            NFT
-          '';
-        };
+
+            chain output {
+              type filter hook output priority 0; policy accept;
+            }
+          }
+
+          table inet nat {
+            chain postrouting {
+              type nat hook postrouting priority srcnat; policy accept;
+
+              # NAT only via VPN
+              oifname "${cfg.vpnInterface}" masquerade
+            }
+          }
+        '';
       };
 
       systemd.services.kea-dhcp4 = {
@@ -530,6 +391,16 @@ in
           pkgs.gnugrep
           pkgs.iproute2
           pkgs.gawk
+          pkgs.jq
+          pkgs.systemd
+          pkgs.nftables
+          pkgs.traceroute
+          pkgs.iproute2
+          pkgs.gawk
+          pkgs.util-linux
+          pkgs.gron
+          pkgs.jq
+          pkgs.networkmanager
         ];
         unitConfig = {
           StartLimitIntervalSec = 0;
@@ -580,6 +451,11 @@ in
           FIRST_HOST=$(echo "''${NETWORK_INFO}" | ${pkgs.gawk}/bin/awk '/Usable range/ {print $4}')
           LAST_HOST=$(echo "''${NETWORK_INFO}" | ${pkgs.gawk}/bin/awk '/Usable range/ {print $6}')
           POOL="''${FIRST_HOST}-''${LAST_HOST}"
+          # Discover current VPN IPv4 DNS endpoint
+          IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
+          if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
+              IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
+          fi
 
           mkdir -p /etc/kea
           cat > /etc/kea/kea-dhcp4.conf <<EOF
@@ -606,7 +482,7 @@ in
                   "option-data": [
                     { "name": "routers", "data": "''${GATEWAY}" },
                     { "name": "subnet-mask", "data": "''${NETMASK}" },
-                    { "name": "domain-name-servers", "data": "''${GATEWAY}" }
+                    { "name": "domain-name-servers", "data": "''${IPv4_DNS_VPN}" }
                   ]
                 }
               ]
@@ -641,6 +517,16 @@ in
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR")
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | ${pkgs.gawk}/bin/awk '{print $5}')
           IPV6_ADDR_WITHOUT_MASK=$(echo $IPV6_ADDR | sed 's/\/.*//g')
+
+          IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
+             | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
+             | gron | grep '"ipv6.dns"' | gron -v || true)
+          if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
+             IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com 2>/dev/null | tail -n1 | awk '{print $2}')
+          fi
+
+          IPV6_ADDR_WITHOUT_MASK=$IPv6_DNS_VPN
+
           echo -n 'interface ${cfg.lanInterface} {
             AdvSendAdvert on;
             MinRtrAdvInterval 10;
