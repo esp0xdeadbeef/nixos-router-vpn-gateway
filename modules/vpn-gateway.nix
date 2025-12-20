@@ -405,45 +405,39 @@ in
         after = [ "vpn-ready.target" ];
 
         path = [
-          pkgs.jq
-          pkgs.systemd
           pkgs.nftables
-          pkgs.traceroute
+          pkgs.iproute2
           pkgs.gawk
-          pkgs.util-linux
-          pkgs.gron
-          pkgs.jq
-          pkgs.networkmanager
         ];
 
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 10;
 
           ExecStart = pkgs.writeShellScript "update_nftables_v4" ''
-            set -euo pipefail
-            set -x
+                  set -euo pipefail
+                  set -x
 
-            ${pkgs.nftables}/bin/nft flush table ip vpn 2>/dev/null || true
+                  LAN_IP=$(${pkgs.iproute2}/bin/ip -4 addr show dev ${cfg.lanInterface} \
+                    | ${pkgs.gawk}/bin/awk '/inet / {print $2}' | cut -d/ -f1)
 
-            # Discover current VPN IPv4 DNS endpoint
-            IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
+                  VPN_IP=$(${pkgs.iproute2}/bin/ip -4 addr show dev ${cfg.vpnInterface} \
+                    | ${pkgs.gawk}/bin/awk '/inet / {print $2}' | cut -d/ -f1)
 
-            if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
-              IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-            fi
+                  if [[ -z "$LAN_IP" || -z "$VPN_IP" ]]; then
+                    echo "Missing LAN or VPN IPv4 address"
+                    exit 1
+                  fi
 
-            echo "[update_nftables_v4] Using VPN DNS endpoint: $IPv4_DNS_VPN"
+                  nft delete table inet lan_to_vpn_v4 2>/dev/null || true
 
-            tmpfile=$(mktemp)
-            cat >"$tmpfile" <<NFT
-            table ip vpn {
+                  nft -f - <<NFT
+            table inet lan_to_vpn_v4 {
+
               chain prerouting {
                 type nat hook prerouting priority dstnat; policy accept;
-                iifname "${cfg.lanInterface}" tcp dport 53 dnat to ${"$IPv4_DNS_VPN"}
-                iifname "${cfg.lanInterface}" udp dport 53 dnat to ${"$IPv4_DNS_VPN"}
+
+                iifname "${cfg.lanInterface}" ip daddr $LAN_IP dnat to $VPN_IP
               }
 
               chain postrouting {
@@ -451,22 +445,14 @@ in
                 ip saddr ${cfg.subnets.ipv4} oifname "${cfg.vpnInterface}" masquerade
               }
 
-              chain mangle_forward {
-                type filter hook forward priority mangle; policy accept;
-                tcp flags syn tcp option maxseg size set rt mtu
-              }
-
               chain forward {
-                type filter hook forward priority 0; policy accept;
-                iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
+                type filter hook forward priority 0; policy drop;
+                ct state established,related accept
+                iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" accept
+                iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
               }
             }
             NFT
-
-            ${pkgs.nftables}/bin/nft -f "$tmpfile"
-            rm -f "$tmpfile"
-
-            echo "[update_nftables_v4] nftables ruleset applied successfully"
           '';
         };
       };
@@ -477,53 +463,40 @@ in
         after = [ "vpn-ready.target" ];
 
         path = [
-          pkgs.jq
-          pkgs.systemd
           pkgs.nftables
-          pkgs.traceroute
+          pkgs.iproute2
           pkgs.gawk
-          pkgs.util-linux
-          pkgs.gron
-          pkgs.networkmanager
         ];
 
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 10;
+
           ExecStart = pkgs.writeShellScript "update_nftables_v6" ''
-              set -euo pipefail
-              set -x
+                  set -euo pipefail
+                  set -x
 
-              ${pkgs.nftables}/bin/nft flush table ip6 vpn 2>/dev/null || true
+                  LAN_IP6=$(${pkgs.iproute2}/bin/ip -6 addr show dev ${cfg.lanInterface} \
+                    | ${pkgs.gawk}/bin/awk '/scope global/ {print $2}' | cut -d/ -f1 | head -n1)
 
-              IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
-                | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
-                | gron | grep '"ipv6.dns"' | gron -v || true)
+                  VPN_IP6=$(${pkgs.iproute2}/bin/ip -6 addr show dev ${cfg.vpnInterface} \
+                    | ${pkgs.gawk}/bin/awk '/scope global/ {print $2}' | cut -d/ -f1 | head -n1)
 
-              if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
-                IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com 2>/dev/null | tail -n1 | awk '{print $2}')
-              fi
+                  if [[ -z "$LAN_IP6" || -z "$VPN_IP6" ]]; then
+                    echo "Missing LAN or VPN IPv6 address"
+                    exit 1
+                  fi
 
-              if [[ "$IPv6_DNS_VPN" =~ : ]]; then
-                echo "[update_nftables_v6] Valid IPv6 DNS endpoint detected: $IPv6_DNS_VPN"
-                DNAT_RULES=$(cat <<RULES
-                iifname "${cfg.lanInterface}" tcp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
-                iifname "${cfg.lanInterface}" udp dport 53 dnat to [${"$IPv6_DNS_VPN"}]:53
-            RULES
-            )
-              else
-                echo "[update_nftables_v6] No valid IPv6 DNS found (value: $IPv6_DNS_VPN). Skipping DNAT to avoid nft syntax errors."
-                DNAT_RULES=""
-              fi
+                  nft delete table inet lan_to_vpn_v6 2>/dev/null || true
 
-              tmpfile=$(mktemp)
-              cat >"$tmpfile" <<NFT
-            table ip6 vpn {
+                  nft -f - <<NFT
+            table inet lan_to_vpn_v6 {
+
               chain prerouting {
                 type nat hook prerouting priority dstnat; policy accept;
-            ${"$DNAT_RULES"}
+
+                # 🔥 SAME LOGIC, IPv6
+                iifname "${cfg.lanInterface}" ip6 daddr $LAN_IP6 dnat to [$VPN_IP6]
               }
 
               chain postrouting {
@@ -531,28 +504,18 @@ in
                 ip6 saddr ${cfg.subnets.ipv6} oifname "${cfg.vpnInterface}" masquerade
               }
 
-              chain mangle_forward {
-                type filter hook forward priority mangle; policy accept;
-                tcp flags syn tcp option maxseg size set rt mtu
-              }
-
               chain forward {
-                type filter hook forward priority 0; policy accept;
-                iifname "${cfg.lanInterface}" oifname "${cfg.lanInterface}" accept
+                type filter hook forward priority 0; policy drop;
+                ct state established,related accept
+                iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" accept
+                iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
               }
             }
             NFT
-
-              echo "[update_nftables_v6] nft ruleset preview:"
-              cat "$tmpfile"
-              nft -f "$tmpfile"
-              rm -f "$tmpfile"
-
-              echo "[update_nftables_v6] nftables IPv6 ruleset applied successfully"
           '';
-
         };
       };
+
       systemd.services.kea-dhcp4 = {
         description = "Kea DHCPv4 Server";
         wantedBy = [ "multi-user.target" ];
