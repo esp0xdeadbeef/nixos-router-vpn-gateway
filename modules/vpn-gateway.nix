@@ -403,6 +403,8 @@ in
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
+        Restart = "on-failure";
+        RestartSec = 10;
 
         path = [
           pkgs.nftables
@@ -461,6 +463,8 @@ in
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
+        Restart = "on-failure";
+        RestartSec = 10;
 
         path = [
           pkgs.nftables
@@ -495,7 +499,6 @@ in
               chain prerouting {
                 type nat hook prerouting priority dstnat; policy accept;
 
-                # 🔥 SAME LOGIC, IPv6
                 iifname "${cfg.lanInterface}" ip6 daddr $LAN_IP6 dnat to [$VPN_IP6]
               }
 
