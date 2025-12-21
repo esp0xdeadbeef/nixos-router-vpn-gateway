@@ -531,7 +531,7 @@ in
           IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v || true)
           if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
             while read -r line; do
-              name=$(dig +short +time=3 +tries=1 google.com @"$line" 2>/dev/null || true)
+              name=$(dig +short +time=3 +tries=1 google.com @"$line" 2>/dev/null | grep -Ev '^(;|$)' || true)
 
               if [[ -n "$name" ]]; then
                 IPv6_DNS_VPN="$line"
