@@ -381,114 +381,103 @@ in
       };
 
       systemd.services.kea-dhcp4 = {
-        description = "Kea DHCPv4 Server";
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
+
         path = [
           pkgs.kea
-          pkgs.systemd
-          pkgs.gnugrep
-          pkgs.iproute2
-          pkgs.gawk
-          pkgs.jq
-          pkgs.systemd
-          pkgs.nftables
-          pkgs.traceroute
-          pkgs.iproute2
-          pkgs.gawk
-          pkgs.util-linux
-          pkgs.gron
-          pkgs.jq
           pkgs.networkmanager
+          pkgs.traceroute
+          pkgs.jq
+          pkgs.gron
+          pkgs.gawk
+          pkgs.iproute2
+          pkgs.dig
         ];
-        unitConfig = {
-          StartLimitIntervalSec = 0;
-        };
 
         serviceConfig = {
-          ExecStart = pkgs.writeShellScript "kea-dhcp4-execstart" ''
-            set -euo pipefail
-            set -x
-
-            mkdir -p /run/kea || true 
-            mkdir -p /var/lib/kea || true
-            chmod 0755 /run/kea
-
-            exec kea-dhcp4 -c /etc/kea/kea-dhcp4.conf
-          '';
-
-          Restart = "always";
+          ExecStart = "${pkgs.kea}/bin/kea-dhcp4 -c /etc/kea/kea-dhcp4.conf";
+          Restart = "on-failure";
           RestartSec = 10;
-          ExecStartPost = pkgs.writeShellScript "kea-dhcp4-postcheck" ''
-            #!/usr/bin/env bash
-            set -euo pipefail
-            sleep 1
-            ip="$(ip -4 addr show dev "${cfg.lanInterface}" | awk '/inet / {print $2}' | cut -d/ -f1)"
-            if ! ss -lunp | grep -q "$ip:67"; then
-              echo "kea-dhcp4 not listening on $ip (${cfg.subnets.ipv4}:67)"
-              exit 1
-            fi
-          '';
-
+          StartLimitBurst = 0;
         };
 
         preStart = ''
-          set -euo pipefail
-          set -x
-          mkdir -p /etc/kea || true
-          mkdir -p /var/lib/kea || true
-          chmod 700 /var/lib/kea
-          IPV4_ADDR="${cfg.subnets.ipv4}"
+              echo "Generating kea-dhcp4.conf..."
+              set -euo pipefail
+              set -x
 
-          NETWORK_INFO=$(${pkgs.sipcalc}/bin/sipcalc "''${IPV4_ADDR}")
+              mkdir -p /etc/kea /var/lib/kea
+              chmod 700 /var/lib/kea
 
-          PREFIX=$(echo "''${NETWORK_INFO}" | ${pkgs.gawk}/bin/awk -F- '/Network address/ {gsub(/ /,"",$2); print $2}')
-          CIDR=$(echo "''${IPV4_ADDR}" | cut -d/ -f2)
-          NETMASK=$(echo "''${NETWORK_INFO}" | ${pkgs.gawk}/bin/awk -F- '/Network mask[[:space:]]*-/ {gsub(/ /,"",$2); print $2}')
-          GATEWAY=$(echo "''${IPV4_ADDR}" | ${pkgs.gnused}/bin/sed 's#/.*##')
+              LAN_IF=${cfg.lanInterface}
+              IPV4_CIDR=${cfg.subnets.ipv4}
 
-          FIRST_HOST=$(echo "''${NETWORK_INFO}" | ${pkgs.gawk}/bin/awk '/Usable range/ {print $4}')
-          LAST_HOST=$(echo "''${NETWORK_INFO}" | ${pkgs.gawk}/bin/awk '/Usable range/ {print $6}')
-          POOL="''${FIRST_HOST}-''${LAST_HOST}"
-          # Discover current VPN IPv4 DNS endpoint
-          IPv4_DNS_VPN=$(${pkgs.networkmanager}/bin/nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | split(":") | {(.[0]): (.[1])}] | add' | gron | grep '"ipv4.dns"' | gron -v)
-          if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
-              IPv4_DNS_VPN=$(${pkgs.traceroute}/bin/traceroute --interface=${cfg.vpnInterface} -n4 -m 1 google.com | tail -n1 | ${pkgs.gawk}/bin/awk '{print $2}')
-          fi
+              # ---- Gateway = address actually configured on LAN ----
+              GATEWAY=$(ip -4 addr show dev "$LAN_IF" \
+                | awk '/inet / {print $2}' | cut -d/ -f1)
 
-          mkdir -p /etc/kea
-          cat > /etc/kea/kea-dhcp4.conf <<EOF
+              # ---- Deterministic pool (RA-like mental model) ----
+              BASE=$(echo "$GATEWAY" | sed 's/\.[0-9]*$//')
+              POOL="$BASE.50-$BASE.200"
+
+              # ---- DNS discovery (same logic as radvd) ----
+              IPv4_DNS_VPN=$(
+                nmcli -t -f all connection show ${cfg.vpnInterface} \
+                  | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
+                  | gron | grep '"ipv4.dns"' | gron -v || true
+              )
+
+              if [[ -z "$IPv4_DNS_VPN" || "$IPv4_DNS_VPN" == "--" ]]; then
+                while read -r line; do
+                  if dig +short +time=3 +tries=1 google.com @"$line" 2>/dev/null \
+                       | grep -Ev '^(;|$)' >/dev/null; then
+                    IPv4_DNS_VPN="$line"
+                    break
+                  fi
+                done < <(
+                  traceroute -n4 --interface="${cfg.vpnInterface}" dns.google.com 2>/dev/null \
+                    | grep -v packets | grep -v '\*' | awk '{print $2}'
+                )
+              fi
+
+              # ---- Write Kea config ----
+              cat > /etc/kea/kea-dhcp4.conf <<EOF
           {
             "Dhcp4": {
+              "interfaces-config": {
+                "interfaces": [ "$LAN_IF" ]
+              },
+
               "valid-lifetime": 600,
               "renew-timer": 300,
               "rebind-timer": 540,
-              "interfaces-config": {
-                "interfaces": [ "${cfg.lanInterface}" ]
-              },
+
               "lease-database": {
                 "type": "memfile",
                 "persist": true,
                 "name": "/var/lib/kea/dhcp4.leases"
               },
+
               "subnet4": [
                 {
                   "id": 1,
-                  "subnet": "''${PREFIX}/''${CIDR}",
+                  "subnet": "$IPV4_CIDR",
                   "pools": [
-                    { "pool": "''${POOL}" }
+                    { "pool": "$POOL" }
                   ],
                   "option-data": [
-                    { "name": "routers", "data": "''${GATEWAY}" },
-                    { "name": "subnet-mask", "data": "''${NETMASK}" },
-                    { "name": "domain-name-servers", "data": "''${IPv4_DNS_VPN}" }
+                    { "name": "routers", "data": "$GATEWAY" },
+                    { "name": "domain-name-servers", "data": "$IPv4_DNS_VPN" }
                   ]
                 }
               ]
             }
           }
           EOF
+
+          chmod 644 /etc/kea/kea-dhcp4.conf
         '';
       };
 
@@ -520,19 +509,12 @@ in
           set -euo pipefail
           set -x
 
-          IPV6_ADDR=$(ip -6 a s ${cfg.lanInterface} | grep 'scope global' | awk '{print $2}')
-
           IPV6_ADDR=${cfg.subnets.ipv6}
-
-          PREFIX=$(sipcalc "$IPV6_ADDR")
           PREFIX=$(sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | awk '{print $5}')
-          #IPV6_ADDR_WITHOUT_MASK=$(echo $IPV6_ADDR | sed 's/\/.*//g')
-
           IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v || true)
           if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
             while read -r line; do
               name=$(dig +short +time=3 +tries=1 google.com @"$line" 2>/dev/null | grep -Ev '^(;|$)' || true)
-
               if [[ -n "$name" ]]; then
                 IPv6_DNS_VPN="$line"
                 break
@@ -547,7 +529,7 @@ in
             MinRtrAdvInterval 10;
             MaxRtrAdvInterval 30;
             RDNSS '$IPV6_ADDR_WITHOUT_MASK' {
-                    AdvRDNSSLifetime 800;
+               AdvRDNSSLifetime 800;
             };
             prefix '$PREFIX' {
               AdvOnLink on;
@@ -560,6 +542,7 @@ in
       };
 
       environment.systemPackages = with pkgs; [
+        dig
         dnsutils
         openvpn
         wireguard-tools
