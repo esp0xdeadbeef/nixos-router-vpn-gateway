@@ -496,7 +496,13 @@ in
         wantedBy = [ "multi-user.target" ];
         requires = [ "vpn-ready.target" ];
         after = [ "vpn-ready.target" ];
-        path = [ pkgs.radvd ];
+        path = [
+          pkgs.radvd
+          pkgs.nmcli
+          pkgs.jq
+          pkgs.gron
+          pkgs.gawk
+        ];
 
         serviceConfig = {
           ExecStart = "${pkgs.radvd}/bin/radvd -n -C /etc/radvd.conf ${cfg.lanInterface}";
