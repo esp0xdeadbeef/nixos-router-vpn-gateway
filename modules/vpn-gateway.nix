@@ -531,13 +531,13 @@ in
           IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v || true)
           if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
             while read -r line; do
-              name=$(dig +short google.com @"$line" 2>/dev/null)
+              name=$(dig +short +time=3 +tries=1 google.com @"$line" 2>/dev/null || true)
 
               if [[ -n "$name" ]]; then
                 IPv6_DNS_VPN="$line"
                 break
               fi
-            done < <(traceroute -n6 --interface="${cfg.vpnInterface}" google.com 2>/dev/null | grep -v packets | grep -v '\*' | awk '{print $2}')
+            done < <(traceroute -n6 --interface="${cfg.vpnInterface}" dns.google.com 2>/dev/null | grep -v packets | grep -v '\*' | awk '{print $2}')
           fi
 
           IPV6_ADDR_WITHOUT_MASK=$IPv6_DNS_VPN
