@@ -509,7 +509,7 @@ in
         ];
 
         serviceConfig = {
-          ExecStart = "radvd -n -C /etc/radvd.conf ${cfg.lanInterface}";
+          ExecStart = "${pkgs.radvd}/bin/radvd -n -C /etc/radvd.conf ${cfg.lanInterface}";
           Restart = "on-failure";
           RestartSec = 10;
           StartLimitBurst = 0;
