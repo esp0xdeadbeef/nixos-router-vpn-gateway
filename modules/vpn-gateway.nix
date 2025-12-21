@@ -503,10 +503,13 @@ in
           pkgs.jq
           pkgs.gron
           pkgs.gawk
+          pkgs.dig
+          pkgs.iproute2
+          pkgs.sipcalc
         ];
 
         serviceConfig = {
-          ExecStart = "${pkgs.radvd}/bin/radvd -n -C /etc/radvd.conf ${cfg.lanInterface}";
+          ExecStart = "radvd -n -C /etc/radvd.conf ${cfg.lanInterface}";
           Restart = "on-failure";
           RestartSec = 10;
           StartLimitBurst = 0;
@@ -517,12 +520,12 @@ in
           set -euo pipefail
           set -x
 
-          IPV6_ADDR=$(${pkgs.iproute2}/bin/ip -6 a s ${cfg.lanInterface} | grep 'scope global' | ${pkgs.gawk}/bin/awk '{print $2}')
+          IPV6_ADDR=$(ip -6 a s ${cfg.lanInterface} | grep 'scope global' | awk '{print $2}')
 
           IPV6_ADDR=${cfg.subnets.ipv6}
 
-          PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR")
-          PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | ${pkgs.gawk}/bin/awk '{print $5}')
+          PREFIX=$(sipcalc "$IPV6_ADDR")
+          PREFIX=$(sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | awk '{print $5}')
           #IPV6_ADDR_WITHOUT_MASK=$(echo $IPV6_ADDR | sed 's/\/.*//g')
 
           IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v || true)
