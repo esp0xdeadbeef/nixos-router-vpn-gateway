@@ -523,13 +523,18 @@ in
 
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR")
           PREFIX=$(${pkgs.sipcalc}/bin/sipcalc "$IPV6_ADDR" | grep 'Subnet prefix' | ${pkgs.gawk}/bin/awk '{print $5}')
-          IPV6_ADDR_WITHOUT_MASK=$(echo $IPV6_ADDR | sed 's/\/.*//g')
+          #IPV6_ADDR_WITHOUT_MASK=$(echo $IPV6_ADDR | sed 's/\/.*//g')
 
-          IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} \
-             | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
-             | gron | grep '"ipv6.dns"' | gron -v || true)
+          IPv6_DNS_VPN=$(nmcli -t -f all connection show ${cfg.vpnInterface} | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' | gron | grep '"ipv6.dns"' | gron -v || true)
           if [[ -z "$IPv6_DNS_VPN" || "$IPv6_DNS_VPN" == "--" ]]; then
-             IPv6_DNS_VPN=$(traceroute --interface=${cfg.vpnInterface} -n6 -m 1 google.com 2>/dev/null | tail -n1 | awk '{print $2}')
+            while read -r line; do
+              name=$(dig +short google.com @"$line" 2>/dev/null)
+
+              if [[ -n "$name" ]]; then
+                IPv6_DNS_VPN="$line"
+                break
+              fi
+            done < <(traceroute -n6 --interface="${cfg.vpnInterface}" google.com 2>/dev/null | grep -v packets | grep -v '\*' | awk '{print $2}')
           fi
 
           IPV6_ADDR_WITHOUT_MASK=$IPv6_DNS_VPN
