@@ -499,6 +499,7 @@ in
         path = [
           pkgs.radvd
           pkgs.networkmanager
+          pkgs.traceroute
           pkgs.jq
           pkgs.gron
           pkgs.gawk
