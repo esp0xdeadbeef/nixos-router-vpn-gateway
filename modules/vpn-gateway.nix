@@ -498,7 +498,7 @@ in
         after = [ "vpn-ready.target" ];
         path = [
           pkgs.radvd
-          pkgs.nmcli
+          pkgs.networkmanager
           pkgs.jq
           pkgs.gron
           pkgs.gawk
