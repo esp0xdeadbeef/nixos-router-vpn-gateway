@@ -72,6 +72,12 @@ in
       systemd.services.systemd-networkd-wait-online.enable = pkgs.lib.mkForce false;
       services.resolved.enable = false;
 
+      systemd.tmpfiles.rules = [
+        "d /run/kea 0755 root root -"
+        "d /var/lib/kea 0755 root root -"
+        "d /etc/kea 0755 root root -"
+      ];
+
       networking.networkmanager = {
         enable = true;
         dns = "default";
@@ -408,8 +414,8 @@ in
               set -euo pipefail
               set -x
 
-              mkdir -p /etc/kea /var/lib/kea /run/kea/
-              chmod 700 /var/lib/kea
+              #mkdir -p /etc/kea /var/lib/kea /run/kea/ || true
+              #chmod 700 /var/lib/kea
 
               LAN_IF=${cfg.lanInterface}
               IPV4_CIDR=${cfg.subnets.ipv4}
