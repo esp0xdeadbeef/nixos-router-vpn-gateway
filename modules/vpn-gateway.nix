@@ -408,7 +408,7 @@ in
               set -euo pipefail
               set -x
 
-              mkdir -p /etc/kea /var/lib/kea
+              mkdir -p /etc/kea /var/lib/kea /run/kea/
               chmod 700 /var/lib/kea
 
               LAN_IF=${cfg.lanInterface}
