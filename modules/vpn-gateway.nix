@@ -73,6 +73,7 @@ in
       services.resolved.enable = false;
 
       systemd.tmpfiles.rules = [
+        "L+ /etc/resolv.conf - - - - /run/NetworkManager/resolv.conf"
         "d /run/kea 0755 root root -"
         "d /var/lib/kea 0755 root root -"
         "d /etc/kea 0755 root root -"
@@ -100,9 +101,6 @@ in
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "L+ /etc/resolv.conf - - - - /run/NetworkManager/resolv.conf"
-      ];
       systemd.services.resolvconf.enable = false;
 
       networking.useNetworkd = true;
