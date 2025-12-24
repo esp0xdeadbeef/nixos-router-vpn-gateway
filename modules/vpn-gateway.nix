@@ -344,8 +344,6 @@ in
         ruleset = ''
           flush ruleset
 
-          define LAN_MARK = 0x66
-
           table inet filter {
 
             chain input {
@@ -367,12 +365,12 @@ in
               ct state established,related accept
 
               # Tag any forwarded traffic that ENTERS from LAN
-              iifname "${cfg.lanInterface}" meta mark set LAN_MARK
+              iifname "${cfg.lanInterface}" meta mark set 0x66
 
               # Marked LAN -> VPN only
-              iifname "${cfg.lanInterface}" meta mark LAN_MARK oifname "${cfg.vpnInterface}" accept
+              iifname "${cfg.lanInterface}" meta mark 0x66 oifname "${cfg.vpnInterface}" accept
 
-              # VPN -> LAN return
+              # VPN -> LAN return traffic
               iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
 
               # Absolute invariants
@@ -565,4 +563,3 @@ in
     }
   );
 }
-
