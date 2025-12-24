@@ -297,7 +297,7 @@ in
             fi
 
             RX_BEFORE=$(cat "$rx_path")
-            sleep 5   # short rx adapter sampling window for sampling.
+            sleep 5
             RX_AFTER=$(cat "$rx_path")
 
             if [[ "$RX_BEFORE" -eq "$RX_AFTER" ]]; then
@@ -329,11 +329,22 @@ in
 
       networking.firewall.enable = false;
 
+      ######################################################################
+      # nftables: WORKING + LAN TAGGING (NO BOOTSTRAP BREAKAGE)
+      #
+      # - Keep output ACCEPT so NM can bring up VPN (DNS, endpoints, etc.)
+      # - Tag forwarded traffic arriving from LAN with a mark
+      # - Only allow marked LAN->VPN forwarding
+      # - Explicitly drop LAN->WAN always
+      # - NAT only via VPN
+      ######################################################################
       networking.nftables = {
         enable = true;
 
         ruleset = ''
           flush ruleset
+
+          define LAN_MARK = 0x66
 
           table inet filter {
 
@@ -343,10 +354,10 @@ in
               iif lo accept
               ct state established,related accept
 
-              # LAN can talk to router
+              # LAN can talk to router services (DHCP/RA/etc.)
               iifname "${cfg.lanInterface}" accept
 
-              # Explicitly drop WAN → router
+              # Drop direct WAN -> router (hygiene)
               iifname "${cfg.wanInterface}" drop
             }
 
@@ -355,16 +366,17 @@ in
 
               ct state established,related accept
 
-              # LAN -> VPN
-              iifname "${cfg.lanInterface}" oifname "${cfg.vpnInterface}" accept
+              # Tag any forwarded traffic that ENTERS from LAN
+              iifname "${cfg.lanInterface}" meta mark set LAN_MARK
 
-              # VPN -> LAN (return traffic)
+              # Marked LAN -> VPN only
+              iifname "${cfg.lanInterface}" meta mark LAN_MARK oifname "${cfg.vpnInterface}" accept
+
+              # VPN -> LAN return
               iifname "${cfg.vpnInterface}" oifname "${cfg.lanInterface}" accept
 
-              # LAN must NEVER reach WAN
+              # Absolute invariants
               iifname "${cfg.lanInterface}" oifname "${cfg.wanInterface}" drop
-
-              # WAN must NEVER reach LAN
               iifname "${cfg.wanInterface}" oifname "${cfg.lanInterface}" drop
             }
 
@@ -412,21 +424,15 @@ in
               set -euo pipefail
               set -x
 
-              #mkdir -p /etc/kea /var/lib/kea /run/kea/ || true
-              #chmod 700 /var/lib/kea
-
               LAN_IF=${cfg.lanInterface}
               IPV4_CIDR=${cfg.subnets.ipv4}
 
-              # ---- Gateway = address actually configured on LAN ----
               GATEWAY=$(ip -4 addr show dev "$LAN_IF" \
                 | awk '/inet / {print $2}' | cut -d/ -f1)
 
-              # ---- Deterministic pool (RA-like mental model) ----
               BASE=$(echo "$GATEWAY" | sed 's/\.[0-9]*$//')
               POOL="$BASE.50-$BASE.200"
 
-              # ---- DNS discovery (same logic as radvd) ----
               IPv4_DNS_VPN=$(
                 nmcli -t -f all connection show ${cfg.vpnInterface} \
                   | jq -Rn '[inputs | select(length>0) | {(split(":")[0]): (sub("^[^:]*:"; ""))}] | add' \
@@ -446,7 +452,6 @@ in
                 )
               fi
 
-              # ---- Write Kea config ----
               cat > /etc/kea/kea-dhcp4.conf <<EOF
           {
             "Dhcp4": {
@@ -560,3 +565,4 @@ in
     }
   );
 }
+
